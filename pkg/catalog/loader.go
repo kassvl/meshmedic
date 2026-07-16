@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"text/template"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -65,6 +66,11 @@ func (s Scenario) Validate() error {
 	}
 	if !validComparisons[s.Signal.Comparison] {
 		return fmt.Errorf("signal.comparison %q is not one of > < >= <=", s.Signal.Comparison)
+	}
+	if s.Signal.For != "" {
+		if _, err := time.ParseDuration(s.Signal.For); err != nil {
+			return fmt.Errorf("signal.for: %w", err)
+		}
 	}
 	if s.Remediation.Target.Kind == "" {
 		return fmt.Errorf("remediation.target.kind is required")
