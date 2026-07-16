@@ -132,6 +132,49 @@ func TestOpenUpdatesExistingFileWithSHA(t *testing.T) {
 	}
 }
 
+func TestOpenRetriesTransient5xx(t *testing.T) {
+	f := &fakeGitHub{t: t}
+	inner := f.handler()
+	failures := 1
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if failures > 0 {
+			failures--
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprint(w, "brownout")
+			return
+		}
+		inner.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	c, _ := NewClient(srv.URL, "o/r", "test-token")
+	url, err := c.Open(context.Background(), testPR())
+	if err != nil {
+		t.Fatalf("a single 503 must be retried, got %v", err)
+	}
+	if url != "https://github.com/o/r/pull/1" {
+		t.Fatalf("got url %q", url)
+	}
+}
+
+func TestOpenDoesNotRetry4xx(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusUnprocessableEntity)
+		fmt.Fprint(w, `{"message":"Validation Failed"}`)
+	}))
+	defer srv.Close()
+
+	c, _ := NewClient(srv.URL, "o/r", "test-token")
+	if _, err := c.Open(context.Background(), testPR()); err == nil {
+		t.Fatal("want error")
+	}
+	if calls != 1 {
+		t.Fatalf("4xx retried %d times, client errors must fail fast", calls)
+	}
+}
+
 func TestNewClientRejectsBareRepoName(t *testing.T) {
 	if _, err := NewClient("", "just-a-name", "t"); err == nil {
 		t.Fatal("want error for repo without owner/")

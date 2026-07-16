@@ -164,14 +164,56 @@ func isNotFound(err error) bool {
 	return errors.As(err, &ae) && ae.status == http.StatusNotFound
 }
 
+// do sends one API request, retrying transient failures. GitHub answers
+// with 5xx during brownouts; losing an incident's pull request to one of
+// those is not acceptable, so network errors and 5xx responses get three
+// attempts with backoff before giving up.
 func (c *Client) do(ctx context.Context, method, path string, body, out any) error {
-	var rdr io.Reader
+	var payload []byte
 	if body != nil {
 		b, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		rdr = bytes.NewReader(b)
+		payload = b
+	}
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(time.Duration(attempt) * 2 * time.Second):
+			}
+		}
+		lastErr = c.doOnce(ctx, method, path, payload, out)
+		if lastErr == nil || !isTransient(lastErr) {
+			return lastErr
+		}
+	}
+	return lastErr
+}
+
+func isTransient(err error) bool {
+	var ae *apiError
+	if errors.As(err, &ae) {
+		return ae.status >= 500
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var je *json.SyntaxError
+	if errors.As(err, &je) {
+		return false
+	}
+	// Anything else never produced an HTTP status: a network problem.
+	return true
+}
+
+func (c *Client) doOnce(ctx context.Context, method, path string, payload []byte, out any) error {
+	var rdr io.Reader
+	if payload != nil {
+		rdr = bytes.NewReader(payload)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, c.api+path, rdr)
 	if err != nil {
