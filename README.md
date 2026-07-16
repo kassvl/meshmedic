@@ -3,9 +3,11 @@
 Incident-time remediation for Istio. When the mesh degrades, MeshMedic turns
 the Prometheus signal into a reviewable GitOps pull request that fixes it.
 
-**Status: early development.** The remediation catalog, the patch renderer,
-and the detector work today (see "Try it"). The PR opener is next, then the
-60 second demo the roadmap is built around.
+**Status: early development.** The core loop works end to end today: the
+detector evaluates catalog signals against Prometheus, and when a scenario
+fires, MeshMedic opens a pull request in your config repository with the
+rendered patch and the evidence (see "Try it"). What remains for the first
+milestone is the reproducible demo environment and the video on top of it.
 
 ## The gap it fills
 
@@ -73,6 +75,21 @@ table, the rendered patch, and the rollback note.
 ```console
 $ go run ./cmd/meshmedic watch --config examples/watch.yaml
 meshmedic: watching 7 scenarios for 1 targets against http://localhost:9090 every 30s
+```
+
+Add a `gitops` section to the config and set `MESHMEDIC_GITHUB_TOKEN` (or
+`GITHUB_TOKEN`), and firing turns into a pull request instead of only a
+report: a branch named after the episode, one commit with the patch file,
+and the incident report as the PR body.
+
+```yaml
+gitops:
+  repo: you/your-config-repo
+  path: istio/{{.namespace}}/{{.scenario}}.yaml
+```
+
+```console
+meshmedic: canary-latency-rollback: opened https://github.com/you/your-config-repo/pull/1
 ```
 
 ## Roadmap

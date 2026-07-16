@@ -14,7 +14,7 @@ Needs, in order:
 
 - [x] Remediation catalog with validated entries and rendered patches
 - [x] Detector: evaluate catalog signals against a live Prometheus
-- [ ] PR opener: render patch + evidence + narrative into a GitHub PR
+- [x] PR opener: render patch + evidence + narrative into a GitHub PR
 - [ ] Demo environment: kind + Istio (ambient) + demo app + chaos scripts (`demo/`)
 - [ ] The video
 
