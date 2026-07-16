@@ -3,6 +3,7 @@ package detect
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -14,6 +15,15 @@ type Config struct {
 	Prometheus string   `yaml:"prometheus"`
 	Interval   string   `yaml:"interval"`
 	Targets    []Target `yaml:"targets"`
+	GitOps     *GitOps  `yaml:"gitops"`
+}
+
+// GitOps configures where remediation pull requests go. Absent means watch
+// only prints incident reports.
+type GitOps struct {
+	Repo string `yaml:"repo"` // owner/repo of the config repository
+	Base string `yaml:"base"` // base branch; empty means the repo default
+	Path string `yaml:"path"` // patch file path template inside the repo
 }
 
 const defaultInterval = 30 * time.Second
@@ -42,6 +52,14 @@ func LoadConfig(path string) (Config, error) {
 	if c.Interval != "" {
 		if _, err := time.ParseDuration(c.Interval); err != nil {
 			return c, fmt.Errorf("%s: interval: %w", path, err)
+		}
+	}
+	if c.GitOps != nil {
+		if !strings.Contains(c.GitOps.Repo, "/") {
+			return c, fmt.Errorf("%s: gitops.repo must be owner/repo, got %q", path, c.GitOps.Repo)
+		}
+		if c.GitOps.Path == "" {
+			c.GitOps.Path = "meshmedic/{{.namespace}}/{{.scenario}}.yaml"
 		}
 	}
 	return c, nil

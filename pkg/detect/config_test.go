@@ -38,6 +38,35 @@ func TestLoadConfigRejectsMissingTargets(t *testing.T) {
 	}
 }
 
+func TestLoadConfigGitOpsDefaultsAndValidation(t *testing.T) {
+	cfg, err := LoadConfig(writeConfig(t, `
+prometheus: http://localhost:9090
+gitops:
+  repo: kassvl/config
+targets:
+  - params:
+      service: payments
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.GitOps.Path != "meshmedic/{{.namespace}}/{{.scenario}}.yaml" {
+		t.Fatalf("got default path %q", cfg.GitOps.Path)
+	}
+
+	_, err = LoadConfig(writeConfig(t, `
+prometheus: http://localhost:9090
+gitops:
+  repo: nomissingowner
+targets:
+  - params:
+      service: payments
+`))
+	if err == nil {
+		t.Fatal("want error for gitops.repo without owner/")
+	}
+}
+
 func TestLoadConfigRejectsBadInterval(t *testing.T) {
 	_, err := LoadConfig(writeConfig(t, `
 prometheus: http://localhost:9090
