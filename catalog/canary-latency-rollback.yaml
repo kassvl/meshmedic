@@ -1,0 +1,60 @@
+id: canary-latency-rollback
+title: Canary subset latency regression
+severity: critical
+description: >
+  A newly shifted traffic subset (canary) shows p99 latency far above the
+  stable subset. The fastest safe move during an incident is to send traffic
+  back to the stable subset and investigate the canary offline. This entry
+  assumes the DestinationRule defines the failing subset and a stable subset.
+signal:
+  promql: >
+    histogram_quantile(0.99, sum by (le) (rate(istio_request_duration_milliseconds_bucket{reporter="destination",
+    destination_service_name="{{.service}}", destination_service_namespace="{{.namespace}}",
+    destination_version="{{.subset}}"}[2m])))
+  comparison: ">"
+  threshold: 1000
+  for: 90s
+evidence:
+  - name: p99-stable-for-comparison
+    promql: >
+      histogram_quantile(0.99, sum by (le) (rate(istio_request_duration_milliseconds_bucket{reporter="destination",
+      destination_service_name="{{.service}}", destination_service_namespace="{{.namespace}}",
+      destination_version="{{.stable_subset}}"}[2m])))
+  - name: canary-request-share
+    promql: >
+      sum(rate(istio_requests_total{reporter="destination", destination_service_name="{{.service}}",
+      destination_service_namespace="{{.namespace}}", destination_version="{{.subset}}"}[2m]))
+      /
+      sum(rate(istio_requests_total{reporter="destination", destination_service_name="{{.service}}",
+      destination_service_namespace="{{.namespace}}"}[2m]))
+remediation:
+  target:
+    apiVersion: networking.istio.io/v1
+    kind: VirtualService
+  action: shift-traffic-to-stable
+  patchTemplate: |
+    apiVersion: networking.istio.io/v1
+    kind: VirtualService
+    metadata:
+      name: {{.service}}
+      namespace: {{.namespace}}
+    spec:
+      hosts:
+        - {{.service}}
+      http:
+        - route:
+            - destination:
+                host: {{.service}}
+                subset: {{.stable_subset}}
+              weight: 100
+            - destination:
+                host: {{.service}}
+                subset: {{.subset}}
+              weight: 0
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 1
+rollback: >
+  Restore the previous VirtualService weights once the canary's p99 is back
+  under the threshold in a staging replay, or roll forward with a fixed canary
+  image. The PR that shifted traffic contains the prior weights in its diff.

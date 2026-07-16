@@ -1,0 +1,44 @@
+id: waypoint-overload-scale
+title: Ambient waypoint proxy saturated
+severity: warning
+description: >
+  In ambient mode all L7 traffic for an enrolled namespace flows through its
+  waypoint proxies. When per-replica request rate climbs past what one Envoy
+  instance comfortably handles, latency rises across every service behind it
+  at once, which looks confusingly like an application problem. Scaling the
+  waypoint deployment restores headroom. Experimental: Gateway-managed
+  waypoints are often scaled by HPA; this entry targets deployments where the
+  replica count lives in the config repo.
+signal:
+  promql: >
+    sum(rate(istio_requests_total{reporter="waypoint", destination_service_namespace="{{.namespace}}"}[2m]))
+    /
+    count(kube_pod_status_ready{namespace="{{.namespace}}", pod=~"{{.workload}}-.*", condition="true"})
+  comparison: ">"
+  threshold: 1000
+  for: 120s
+evidence:
+  - name: waypoint-cpu
+    promql: >
+      sum by (pod) (rate(container_cpu_usage_seconds_total{namespace="{{.namespace}}", pod=~"{{.workload}}-.*"}[2m]))
+remediation:
+  target:
+    apiVersion: apps/v1
+    kind: Deployment
+  action: scale-waypoint
+  patchTemplate: |
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: {{.workload}}
+      namespace: {{.namespace}}
+    spec:
+      replicas: 3
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 2
+rollback: >
+  Scale back down once namespace request rate returns to baseline, or replace
+  this scenario with an HPA on the waypoint so the mesh handles it without a
+  PR at all. If latency stays high after scaling, the bottleneck is not the
+  waypoint; look at the destination workloads.

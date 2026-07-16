@@ -1,0 +1,50 @@
+id: error-surge-outlier-ejection
+title: Sustained 5xx surge from a service
+severity: critical
+description: >
+  A service's 5xx ratio holds above 15 percent. When the errors come from a
+  subset of bad endpoints (bad node, wedged pod), ejecting unhealthy hosts
+  from the load balancing pool restores service without touching the workload.
+  Outlier detection does that automatically once configured.
+signal:
+  promql: >
+    sum(rate(istio_requests_total{reporter="destination", destination_service_name="{{.service}}",
+    destination_service_namespace="{{.namespace}}", response_code=~"5.."}[2m]))
+    /
+    sum(rate(istio_requests_total{reporter="destination", destination_service_name="{{.service}}",
+    destination_service_namespace="{{.namespace}}"}[2m]))
+  comparison: ">"
+  threshold: 0.15
+  for: 120s
+evidence:
+  - name: errors-by-pod
+    promql: >
+      sum by (pod) (rate(istio_requests_total{reporter="destination", destination_service_name="{{.service}}",
+      destination_service_namespace="{{.namespace}}", response_code=~"5.."}[2m]))
+remediation:
+  target:
+    apiVersion: networking.istio.io/v1
+    kind: DestinationRule
+  action: enable-outlier-detection
+  patchTemplate: |
+    apiVersion: networking.istio.io/v1
+    kind: DestinationRule
+    metadata:
+      name: {{.service}}-outlier
+      namespace: {{.namespace}}
+    spec:
+      host: {{.service}}
+      trafficPolicy:
+        outlierDetection:
+          consecutive5xxErrors: 5
+          interval: 30s
+          baseEjectionTime: 60s
+          maxEjectionPercent: 50
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 2
+rollback: >
+  If the 5xx ratio does not drop after ejection, the failure is uniform across
+  endpoints (bad deploy, downstream dependency) and this patch is not the fix;
+  revert it and check the canary-latency-rollback and upstream dependencies.
+  maxEjectionPercent 50 caps the blast radius either way.

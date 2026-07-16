@@ -1,0 +1,46 @@
+id: mtls-policy-conflict
+title: Plaintext clients rejected by strict mTLS
+severity: critical
+description: >
+  A namespace or workload was moved to STRICT mTLS while some client outside
+  the mesh (or without a sidecar/ztunnel) still speaks plaintext, producing a
+  wall of 503s with UF/URX flags. The reviewable de-escalation is a scoped
+  PERMISSIVE PeerAuthentication on the affected workload while the plaintext
+  client gets onboarded. This is deliberately a temporary security downgrade;
+  the PR body says so and links the revert.
+signal:
+  promql: >
+    sum(rate(istio_requests_total{reporter="destination", destination_workload="{{.workload}}",
+    destination_service_namespace="{{.namespace}}", response_code="503", response_flags=~"UF|URX"}[2m]))
+  comparison: ">"
+  threshold: 1
+  for: 60s
+evidence:
+  - name: plaintext-vs-mtls-traffic
+    promql: >
+      sum by (connection_security_policy) (rate(istio_requests_total{reporter="destination",
+      destination_workload="{{.workload}}", destination_service_namespace="{{.namespace}}"}[5m]))
+remediation:
+  target:
+    apiVersion: security.istio.io/v1
+    kind: PeerAuthentication
+  action: scoped-permissive-fallback
+  patchTemplate: |
+    apiVersion: security.istio.io/v1
+    kind: PeerAuthentication
+    metadata:
+      name: {{.workload}}-mtls-fallback
+      namespace: {{.namespace}}
+    spec:
+      selector:
+        matchLabels:
+          app: {{.workload}}
+      mtls:
+        mode: PERMISSIVE
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 1
+rollback: >
+  Restore STRICT as soon as the plaintext client has a sidecar or is enrolled
+  in ambient. Track the revert in the incident follow-up; PERMISSIVE left in
+  place indefinitely defeats the point of mesh mTLS.

@@ -1,0 +1,53 @@
+id: connection-pool-overflow
+title: Requests dropped by connection pool limits
+severity: warning
+description: >
+  Requests are failing with the UO (upstream overflow) response flag, meaning
+  Envoy's circuit breaker is shedding load because the configured connection
+  pool for the destination is exhausted. If the destination has spare capacity
+  (CPU and memory healthy), the limits are simply undersized for current
+  traffic and can be raised. If the destination is saturated, raising limits
+  makes things worse; the evidence queries make that call reviewable.
+signal:
+  promql: >
+    sum(rate(istio_requests_total{reporter="source", destination_service_name="{{.service}}",
+    destination_service_namespace="{{.namespace}}", response_flags="UO"}[2m]))
+  comparison: ">"
+  threshold: 1
+  for: 60s
+evidence:
+  - name: destination-cpu-headroom
+    promql: >
+      sum(rate(container_cpu_usage_seconds_total{namespace="{{.namespace}}", pod=~"{{.workload}}-.*"}[2m]))
+      /
+      sum(kube_pod_container_resource_limits{namespace="{{.namespace}}", pod=~"{{.workload}}-.*", resource="cpu"})
+  - name: active-connections
+    promql: >
+      sum(envoy_cluster_upstream_cx_active{cluster_name=~"outbound\\|.*\\|{{.service}}\\.{{.namespace}}\\..*"})
+remediation:
+  target:
+    apiVersion: networking.istio.io/v1
+    kind: DestinationRule
+  action: raise-connection-pool-limits
+  patchTemplate: |
+    apiVersion: networking.istio.io/v1
+    kind: DestinationRule
+    metadata:
+      name: {{.service}}-pool
+      namespace: {{.namespace}}
+    spec:
+      host: {{.service}}
+      trafficPolicy:
+        connectionPool:
+          tcp:
+            maxConnections: 512
+          http:
+            http1MaxPendingRequests: 256
+            http2MaxRequests: 512
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 1
+rollback: >
+  If UO drops but destination CPU saturates, the pool limit was doing its job;
+  revert this patch and scale the destination workload instead. The reviewer
+  should check the destination-cpu-headroom evidence before merging.

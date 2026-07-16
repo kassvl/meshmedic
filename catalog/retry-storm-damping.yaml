@@ -1,0 +1,53 @@
+id: retry-storm-damping
+title: Retry storm amplifying an outage
+severity: critical
+description: >
+  A degraded upstream plus aggressive client retries multiplies load exactly
+  when capacity is lowest, turning a partial failure into a full one. The fix
+  is to cut retry attempts and put a hard timeout on the route so pressure
+  drains and the upstream can recover.
+signal:
+  promql: >
+    sum(rate(envoy_cluster_upstream_rq_retry{cluster_name=~"outbound\\|.*\\|{{.service}}\\.{{.namespace}}\\..*"}[2m]))
+  comparison: ">"
+  threshold: 50
+  for: 60s
+evidence:
+  - name: upstream-error-ratio
+    promql: >
+      sum(rate(istio_requests_total{reporter="source", destination_service_name="{{.service}}",
+      destination_service_namespace="{{.namespace}}", response_code=~"5.."}[2m]))
+      /
+      sum(rate(istio_requests_total{reporter="source", destination_service_name="{{.service}}",
+      destination_service_namespace="{{.namespace}}"}[2m]))
+remediation:
+  target:
+    apiVersion: networking.istio.io/v1
+    kind: VirtualService
+  action: damp-retries
+  patchTemplate: |
+    apiVersion: networking.istio.io/v1
+    kind: VirtualService
+    metadata:
+      name: {{.service}}
+      namespace: {{.namespace}}
+    spec:
+      hosts:
+        - {{.service}}
+      http:
+        - retries:
+            attempts: 1
+            perTryTimeout: 2s
+            retryOn: connect-failure,refused-stream
+          timeout: 5s
+          route:
+            - destination:
+                host: {{.service}}
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 1
+rollback: >
+  Once the upstream error ratio is back to baseline, restore the previous
+  retry policy from the PR diff. Leaving retries at 1 permanently trades
+  resilience to transient blips for storm protection; that is a policy
+  decision, not an incident decision.

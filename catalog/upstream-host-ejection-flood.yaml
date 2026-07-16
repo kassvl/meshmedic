@@ -1,0 +1,52 @@
+id: upstream-host-ejection-flood
+title: No healthy upstream hosts left
+severity: critical
+description: >
+  Requests fail with UH (no healthy upstream) or the ejection metrics show
+  outlier detection has removed most of a service's endpoints. Either the
+  workload is genuinely down, or an over-aggressive outlier policy combined
+  with a transient blip ejected everything at once. The safe mesh-side move
+  is to relax the ejection ceiling so a fraction of hosts always stays in
+  rotation, then let the workload recover.
+signal:
+  promql: >
+    sum(rate(istio_requests_total{reporter="source", destination_service_name="{{.service}}",
+    destination_service_namespace="{{.namespace}}", response_flags="UH"}[2m]))
+  comparison: ">"
+  threshold: 1
+  for: 60s
+evidence:
+  - name: ejected-hosts
+    promql: >
+      sum(envoy_cluster_outlier_detection_ejections_active{cluster_name=~"outbound\\|.*\\|{{.service}}\\.{{.namespace}}\\..*"})
+  - name: ready-endpoints
+    promql: >
+      sum(kube_endpoint_address_available{namespace="{{.namespace}}", endpoint="{{.service}}"})
+remediation:
+  target:
+    apiVersion: networking.istio.io/v1
+    kind: DestinationRule
+  action: cap-ejection-percent
+  patchTemplate: |
+    apiVersion: networking.istio.io/v1
+    kind: DestinationRule
+    metadata:
+      name: {{.service}}-outlier
+      namespace: {{.namespace}}
+    spec:
+      host: {{.service}}
+      trafficPolicy:
+        outlierDetection:
+          consecutive5xxErrors: 10
+          interval: 30s
+          baseEjectionTime: 30s
+          maxEjectionPercent: 25
+          minHealthPercent: 50
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 1
+rollback: >
+  If ready-endpoints evidence shows zero, the workload itself is down and no
+  mesh patch helps; this entry only applies when Kubernetes reports ready
+  endpoints that the mesh refuses to use. Restore the previous ejection policy
+  after the incident review.
