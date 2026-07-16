@@ -18,9 +18,11 @@ import (
 	"strings"
 	"syscall"
 	"text/tabwriter"
+	"time"
 
 	"github.com/kassvl/meshmedic/pkg/catalog"
 	"github.com/kassvl/meshmedic/pkg/detect"
+	"github.com/kassvl/meshmedic/pkg/gitops"
 	"github.com/kassvl/meshmedic/pkg/prom"
 	"github.com/kassvl/meshmedic/pkg/remediate"
 	"github.com/kassvl/meshmedic/pkg/report"
@@ -131,13 +133,54 @@ func runWatch(args []string) {
 	}
 
 	logger := log.New(os.Stderr, "meshmedic: ", log.LstdFlags)
-	handler := func(_ context.Context, inc detect.Incident) {
+
+	var opener *gitops.Client
+	if cfg.GitOps != nil {
+		token := os.Getenv("MESHMEDIC_GITHUB_TOKEN")
+		if token == "" {
+			token = os.Getenv("GITHUB_TOKEN")
+		}
+		if token == "" {
+			fmt.Fprintln(os.Stderr, "gitops is configured but neither MESHMEDIC_GITHUB_TOKEN nor GITHUB_TOKEN is set")
+			os.Exit(1)
+		}
+		opener, err = gitops.NewClient("", cfg.GitOps.Repo, token)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "config invalid:", err)
+			os.Exit(1)
+		}
+	}
+
+	handler := func(ctx context.Context, inc detect.Incident) {
 		patch, err := remediate.Render(inc.Scenario, inc.Params)
 		if err != nil {
 			logger.Printf("%s: rendering patch: %v", inc.Scenario.ID, err)
 			patch = "# patch rendering failed, see logs\n"
 		}
-		fmt.Println(report.Markdown(inc, patch))
+		doc := report.Markdown(inc, patch)
+		fmt.Println(doc)
+		if opener == nil {
+			return
+		}
+		path, err := gitops.PathFor(cfg.GitOps.Path, inc.Params, inc.Scenario.ID)
+		if err != nil {
+			logger.Printf("%s: %v", inc.Scenario.ID, err)
+			return
+		}
+		url, err := opener.Open(ctx, gitops.PullRequest{
+			Branch:        gitops.BranchFor(inc.Scenario.ID, time.Now()),
+			Base:          cfg.GitOps.Base,
+			Title:         fmt.Sprintf("[meshmedic] %s: %s", inc.Scenario.Title, describeTarget(inc.Params)),
+			Body:          doc,
+			Path:          path,
+			Content:       []byte(patch),
+			CommitMessage: fmt.Sprintf("meshmedic: %s (%s)", inc.Scenario.Remediation.Action, inc.Scenario.ID),
+		})
+		if err != nil {
+			logger.Printf("%s: opening pull request: %v", inc.Scenario.ID, err)
+			return
+		}
+		logger.Printf("%s: opened %s", inc.Scenario.ID, url)
 	}
 
 	d := detect.New(scenarios, cfg.Targets, prom.NewClient(cfg.Prometheus), handler)
@@ -149,6 +192,18 @@ func runWatch(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	d.Run(ctx, cfg.IntervalDuration())
+}
+
+// describeTarget names the incident's subject for the PR title, preferring
+// service.namespace when both are present.
+func describeTarget(params map[string]string) string {
+	if params["service"] != "" && params["namespace"] != "" {
+		return params["service"] + "." + params["namespace"]
+	}
+	if params["workload"] != "" && params["namespace"] != "" {
+		return params["workload"] + "." + params["namespace"]
+	}
+	return "target"
 }
 
 type multiFlag []string

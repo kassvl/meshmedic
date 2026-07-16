@@ -2,6 +2,12 @@
 # Every target is a set of template parameters evaluated against the catalog.
 prometheus: http://localhost:9090
 interval: 30s
+# Uncomment to open remediation pull requests instead of only printing
+# reports. The token comes from MESHMEDIC_GITHUB_TOKEN or GITHUB_TOKEN.
+# gitops:
+#   repo: you/your-config-repo
+#   base: main
+#   path: istio/{{.namespace}}/{{.scenario}}.yaml
 targets:
   - params:
       service: payments
