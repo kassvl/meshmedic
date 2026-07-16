@@ -10,7 +10,7 @@ description: >
   the PR body says so and links the revert.
 signal:
   promql: >
-    sum(rate(istio_requests_total{reporter="destination", destination_workload="{{.workload}}",
+    sum(rate(istio_requests_total{reporter=~"destination|waypoint", destination_workload="{{.workload}}",
     destination_service_namespace="{{.namespace}}", response_code="503", response_flags=~"UF|URX"}[2m]))
   comparison: ">"
   threshold: 1
@@ -18,7 +18,7 @@ signal:
 evidence:
   - name: plaintext-vs-mtls-traffic
     promql: >
-      sum by (connection_security_policy) (rate(istio_requests_total{reporter="destination",
+      sum by (connection_security_policy) (rate(istio_requests_total{reporter=~"destination|waypoint",
       destination_workload="{{.workload}}", destination_service_namespace="{{.namespace}}"}[5m]))
 remediation:
   target:

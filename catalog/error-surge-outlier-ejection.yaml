@@ -8,10 +8,10 @@ description: >
   Outlier detection does that automatically once configured.
 signal:
   promql: >
-    sum(rate(istio_requests_total{reporter="destination", destination_service_name="{{.service}}",
+    sum(rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
     destination_service_namespace="{{.namespace}}", response_code=~"5.."}[2m]))
     /
-    sum(rate(istio_requests_total{reporter="destination", destination_service_name="{{.service}}",
+    sum(rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
     destination_service_namespace="{{.namespace}}"}[2m]))
   comparison: ">"
   threshold: 0.15
@@ -19,7 +19,7 @@ signal:
 evidence:
   - name: errors-by-pod
     promql: >
-      sum by (pod) (rate(istio_requests_total{reporter="destination", destination_service_name="{{.service}}",
+      sum by (pod) (rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
       destination_service_namespace="{{.namespace}}", response_code=~"5.."}[2m]))
 remediation:
   target:

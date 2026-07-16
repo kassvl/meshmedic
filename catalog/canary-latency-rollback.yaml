@@ -8,7 +8,7 @@ description: >
   assumes the DestinationRule defines the failing subset and a stable subset.
 signal:
   promql: >
-    histogram_quantile(0.99, sum by (le) (rate(istio_request_duration_milliseconds_bucket{reporter="destination",
+    histogram_quantile(0.99, sum by (le) (rate(istio_request_duration_milliseconds_bucket{reporter=~"destination|waypoint",
     destination_service_name="{{.service}}", destination_service_namespace="{{.namespace}}",
     destination_version="{{.subset}}"}[2m])))
   comparison: ">"
@@ -17,15 +17,15 @@ signal:
 evidence:
   - name: p99-stable-for-comparison
     promql: >
-      histogram_quantile(0.99, sum by (le) (rate(istio_request_duration_milliseconds_bucket{reporter="destination",
+      histogram_quantile(0.99, sum by (le) (rate(istio_request_duration_milliseconds_bucket{reporter=~"destination|waypoint",
       destination_service_name="{{.service}}", destination_service_namespace="{{.namespace}}",
       destination_version="{{.stable_subset}}"}[2m])))
   - name: canary-request-share
     promql: >
-      sum(rate(istio_requests_total{reporter="destination", destination_service_name="{{.service}}",
+      sum(rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
       destination_service_namespace="{{.namespace}}", destination_version="{{.subset}}"}[2m]))
       /
-      sum(rate(istio_requests_total{reporter="destination", destination_service_name="{{.service}}",
+      sum(rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
       destination_service_namespace="{{.namespace}}"}[2m]))
 remediation:
   target:
