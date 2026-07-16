@@ -1,0 +1,12 @@
+# Watch configuration for the demo environment in demo/.
+# Every target is a set of template parameters evaluated against the catalog.
+prometheus: http://localhost:9090
+interval: 30s
+targets:
+  - params:
+      service: payments
+      namespace: demo
+      workload: payments-v2
+      subset: v2
+      stable_subset: v1
+    # scenarios: [canary-latency-rollback]   # omit to watch the whole catalog
