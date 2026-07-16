@@ -1,20 +1,29 @@
-// Command meshmedic is the CLI entry point. Two subcommands work today:
+// Command meshmedic is the CLI entry point. Three subcommands work today:
 //
 //	validate  load the catalog and list what the engine knows how to fix
 //	render    fill a scenario's patch template with incident parameters
+//	watch     evaluate catalog signals against a live Prometheus and print
+//	          an incident report with the proposed patch when one fires
 //
-// The controller loop (Prometheus watch, PR automation) lands behind these.
+// The PR opener lands behind these.
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"log"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"text/tabwriter"
 
 	"github.com/kassvl/meshmedic/pkg/catalog"
+	"github.com/kassvl/meshmedic/pkg/detect"
+	"github.com/kassvl/meshmedic/pkg/prom"
 	"github.com/kassvl/meshmedic/pkg/remediate"
+	"github.com/kassvl/meshmedic/pkg/report"
 )
 
 func main() {
@@ -27,6 +36,8 @@ func main() {
 		runValidate(os.Args[2:])
 	case "render":
 		runRender(os.Args[2:])
+	case "watch":
+		runWatch(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -36,7 +47,8 @@ func main() {
 func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
   meshmedic validate [--catalog dir]
-  meshmedic render --scenario id --set key=value [--set ...] [--catalog dir]`)
+  meshmedic render --scenario id --set key=value [--set ...] [--catalog dir]
+  meshmedic watch --config watch.yaml [--catalog dir]`)
 }
 
 func runValidate(args []string) {
@@ -99,6 +111,44 @@ func runRender(args []string) {
 	}
 	fmt.Fprintf(os.Stderr, "unknown scenario %q, run `meshmedic validate` to list\n", *id)
 	os.Exit(1)
+}
+
+func runWatch(args []string) {
+	fs := flag.NewFlagSet("watch", flag.ExitOnError)
+	dir := fs.String("catalog", "catalog", "catalog directory")
+	cfgPath := fs.String("config", "watch.yaml", "watch config file")
+	fs.Parse(args)
+
+	scenarios, err := catalog.LoadDir(*dir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "catalog invalid:", err)
+		os.Exit(1)
+	}
+	cfg, err := detect.LoadConfig(*cfgPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "config invalid:", err)
+		os.Exit(1)
+	}
+
+	logger := log.New(os.Stderr, "meshmedic: ", log.LstdFlags)
+	handler := func(_ context.Context, inc detect.Incident) {
+		patch, err := remediate.Render(inc.Scenario, inc.Params)
+		if err != nil {
+			logger.Printf("%s: rendering patch: %v", inc.Scenario.ID, err)
+			patch = "# patch rendering failed, see logs\n"
+		}
+		fmt.Println(report.Markdown(inc, patch))
+	}
+
+	d := detect.New(scenarios, cfg.Targets, prom.NewClient(cfg.Prometheus), handler)
+	d.Log = logger.Printf
+
+	logger.Printf("watching %d scenarios for %d targets against %s every %s",
+		len(scenarios), len(cfg.Targets), cfg.Prometheus, cfg.IntervalDuration())
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	d.Run(ctx, cfg.IntervalDuration())
 }
 
 type multiFlag []string
