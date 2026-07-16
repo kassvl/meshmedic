@@ -1,0 +1,141 @@
+# The demo workload: a payments service with a stable v1 and a canary v2,
+# split 80/20 by the VirtualService. fake-service lets the chaos script turn
+# latency up on v2 with a single env change.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo
+  labels:
+    istio.io/dataplane-mode: ambient
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-v1
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payments
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: payments
+        version: v1
+    spec:
+      containers:
+        - name: payments
+          image: nicholasjackson/fake-service:v0.26.2
+          ports:
+            - containerPort: 9090
+          env:
+            - name: NAME
+              value: payments-v1
+            - name: MESSAGE
+              value: ok
+            - name: TIMING_50_PERCENTILE
+              value: 20ms
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: payments-v2
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: payments
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: payments
+        version: v2
+    spec:
+      containers:
+        - name: payments
+          image: nicholasjackson/fake-service:v0.26.2
+          ports:
+            - containerPort: 9090
+          env:
+            - name: NAME
+              value: payments-v2
+            - name: MESSAGE
+              value: ok
+            - name: TIMING_50_PERCENTILE
+              value: 20ms
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: payments
+  namespace: demo
+  labels:
+    app: payments
+spec:
+  selector:
+    app: payments
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: payments
+  namespace: demo
+spec:
+  host: payments
+  subsets:
+    - name: v1
+      labels:
+        version: v1
+    - name: v2
+      labels:
+        version: v2
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: payments
+  namespace: demo
+spec:
+  hosts:
+    - payments
+  http:
+    - route:
+        - destination:
+            host: payments
+            subset: v1
+          weight: 80
+        - destination:
+            host: payments
+            subset: v2
+          weight: 20
+---
+# Constant background traffic so the mesh has something to measure.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loadgen
+  template:
+    metadata:
+      labels:
+        app: loadgen
+    spec:
+      containers:
+        - name: loadgen
+          image: curlimages/curl:8.11.1
+          command: ["sh", "-c"]
+          args:
+            - while true; do curl -s -o /dev/null http://payments:9090/; sleep 0.2; done
