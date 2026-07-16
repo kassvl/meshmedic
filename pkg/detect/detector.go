@@ -58,8 +58,11 @@ type EvidenceResult struct {
 	Err    error
 }
 
-// HandlerFunc receives each incident exactly once per breach episode.
-type HandlerFunc func(ctx context.Context, inc Incident)
+// HandlerFunc receives each incident. Returning an error keeps the episode
+// alive: the detector stays pending and delivers the incident again on the
+// next tick, so a GitHub brownout cannot swallow a real incident. Return nil
+// once the incident is durably handed off.
+type HandlerFunc func(ctx context.Context, inc Incident) error
 
 type state int
 
@@ -164,14 +167,18 @@ func (d *Detector) evaluate(ctx context.Context, now time.Time, ti int, t Target
 		fallthrough
 	case pending:
 		if now.Sub(st.since) >= forDuration(s) {
-			st.state = firing
-			d.handle(ctx, Incident{
+			err := d.handle(ctx, Incident{
 				Scenario: s,
 				Params:   t.Params,
 				Value:    value,
 				Since:    st.since,
 				Evidence: d.gatherEvidence(ctx, s, t.Params),
 			})
+			if err != nil {
+				d.Log("%s: handler failed, keeping the episode for retry: %v", key, err)
+				return
+			}
+			st.state = firing
 		}
 	case firing:
 		// Already delivered; stay quiet until the condition clears.

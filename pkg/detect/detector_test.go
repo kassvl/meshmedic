@@ -57,7 +57,7 @@ func scripted(t *testing.T, steps []struct {
 		[]catalog.Scenario{testScenario()},
 		[]Target{{Params: map[string]string{}}},
 		q,
-		func(_ context.Context, inc Incident) { fired = append(fired, inc) },
+		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
 	)
 	base := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
 	for idx = 0; idx < len(steps); idx++ {
@@ -144,11 +144,37 @@ func TestZeroForDurationFiresImmediately(t *testing.T) {
 		[]catalog.Scenario{s},
 		[]Target{{Params: map[string]string{}}},
 		querierFunc(func(context.Context, string) (float64, error) { return 1, nil }),
-		func(_ context.Context, inc Incident) { fired = append(fired, inc) },
+		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
 	)
 	d.Tick(context.Background(), time.Now())
 	if len(fired) != 1 {
 		t.Fatalf("got %d incidents, want 1 on the first tick", len(fired))
+	}
+}
+
+func TestFailingHandlerKeepsTheEpisodeAlive(t *testing.T) {
+	s := testScenario()
+	s.Signal.For = ""
+	deliveries, failures := 0, 2
+	d := New(
+		[]catalog.Scenario{s},
+		[]Target{{Params: map[string]string{}}},
+		querierFunc(func(context.Context, string) (float64, error) { return 1, nil }),
+		func(_ context.Context, _ Incident) error {
+			deliveries++
+			if failures > 0 {
+				failures--
+				return errors.New("github brownout")
+			}
+			return nil
+		},
+	)
+	now := time.Now()
+	for i := 0; i < 5; i++ {
+		d.Tick(context.Background(), now.Add(time.Duration(i)*time.Second))
+	}
+	if deliveries != 3 {
+		t.Fatalf("got %d deliveries, want 3: retried until the handler succeeds, then quiet", deliveries)
 	}
 }
 
@@ -161,7 +187,7 @@ func TestTargetScenarioFilter(t *testing.T) {
 			Scenarios: []string{"some-other-scenario"},
 		}},
 		querierFunc(func(context.Context, string) (float64, error) { return 1, nil }),
-		func(_ context.Context, inc Incident) { fired = append(fired, inc) },
+		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
 	)
 	d.Tick(context.Background(), time.Now())
 	if len(fired) != 0 {

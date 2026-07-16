@@ -151,21 +151,24 @@ func runWatch(args []string) {
 		}
 	}
 
-	handler := func(ctx context.Context, inc detect.Incident) {
+	handler := func(ctx context.Context, inc detect.Incident) error {
 		patch, err := remediate.Render(inc.Scenario, inc.Params)
 		if err != nil {
+			// A template or parameter problem does not fix itself on
+			// retry; log it, keep the report, skip the pull request.
 			logger.Printf("%s: rendering patch: %v", inc.Scenario.ID, err)
-			patch = "# patch rendering failed, see logs\n"
+			fmt.Println(report.Markdown(inc, "# patch rendering failed, see logs\n"))
+			return nil
 		}
 		doc := report.Markdown(inc, patch)
 		fmt.Println(doc)
 		if opener == nil {
-			return
+			return nil
 		}
 		path, err := gitops.PathFor(cfg.GitOps.Path, inc.Params, inc.Scenario.ID)
 		if err != nil {
 			logger.Printf("%s: %v", inc.Scenario.ID, err)
-			return
+			return nil
 		}
 		url, err := opener.Open(ctx, gitops.PullRequest{
 			Branch:        gitops.BranchFor(inc.Scenario.ID, time.Now()),
@@ -177,10 +180,13 @@ func runWatch(args []string) {
 			CommitMessage: fmt.Sprintf("meshmedic: %s (%s)", inc.Scenario.Remediation.Action, inc.Scenario.ID),
 		})
 		if err != nil {
+			// Transient outage on the far side: hand the episode back to
+			// the detector so the PR is attempted again next tick.
 			logger.Printf("%s: opening pull request: %v", inc.Scenario.ID, err)
-			return
+			return err
 		}
 		logger.Printf("%s: opened %s", inc.Scenario.ID, url)
+		return nil
 	}
 
 	d := detect.New(scenarios, cfg.Targets, prom.NewClient(cfg.Prometheus), handler)
