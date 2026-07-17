@@ -1,6 +1,8 @@
 # The 60 second demo
 
-Storyboard for the M1 video. One take, no cuts, wall clock visible.
+Storyboard for the M1 video. Five shots, every frame from one real episode;
+the cuts bracket the waiting (rate windows, the 90s hold, Argo sync) instead
+of speeding footage up.
 
 | t | shot | what happens |
 | --- | --- | --- |
