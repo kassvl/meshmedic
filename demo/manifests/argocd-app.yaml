@@ -1,0 +1,19 @@
+# Argo CD application syncing MeshMedic's config repo into the cluster.
+# Merging a MeshMedic pull request is what actually heals the mesh.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: meshmedic-demo-config
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/kassvl/meshmedic-demo-config
+    targetRevision: main
+    path: istio
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated: {}

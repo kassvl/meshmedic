@@ -10,14 +10,27 @@ Storyboard for the M1 video. One take, no cuts, wall clock visible.
 | 35-45s | GitHub | policy check green, human clicks merge |
 | 45-60s | Grafana | Argo CD syncs, canary weight drops to 0, p99 falls back to baseline, panel green |
 
-## Environment (to build)
+## Running it
 
-- kind cluster, Istio ambient profile
-- demo app: two-version payments service behind a VirtualService
-- kube-prometheus-stack, Grafana dashboard tuned for the two panels in shot 1
-- Argo CD watching a local gitea or a scratch GitHub repo, so the merge visibly syncs
-- chaos scripts: `inject-canary-latency.sh` (fault injection via EnvoyFilter or app flag), `inject-5xx.sh`, `revoke-mtls-client.sh`
+The whole loop below has been exercised for real: chaos in, pull request
+out, merge, mesh healed.
 
-Scripts land in this directory as they are written. The storyboard is the
-acceptance test: if a step cannot be shown in its time slot, the component
-behind it is not done.
+```console
+$ ./scripts/00-cluster.sh          # kind cluster
+$ ./scripts/01-istio.sh            # Istio ambient + Gateway API CRDs + Prometheus
+$ ./scripts/02-app.sh              # payments v1/v2 + loadgen + waypoint
+$ GITHUB_TOKEN=... ./scripts/03-argocd.sh   # Argo CD watching the config repo
+
+$ kubectl -n istio-system port-forward svc/prometheus 9090:9090 &
+$ GITHUB_TOKEN=... meshmedic watch --config ../demo/watch.yaml &
+
+$ ./scripts/inject-canary-latency.sh
+# ~2 minutes later MeshMedic opens the PR; merge it and watch
+# the VirtualService shift to 100/0 and the canary drain to zero.
+$ ./scripts/heal-canary.sh         # reset for the next take
+```
+
+Still missing for the video: a Grafana dashboard for the two panels in
+shot 1, and the recording itself. The storyboard is the acceptance test:
+if a step cannot be shown in its time slot, the component behind it is
+not done.
