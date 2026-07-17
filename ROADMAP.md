@@ -15,8 +15,10 @@ Needs, in order:
 - [x] Remediation catalog with validated entries and rendered patches
 - [x] Detector: evaluate catalog signals against a live Prometheus
 - [x] PR opener: render patch + evidence + narrative into a GitHub PR
-- [ ] Demo environment: kind + Istio (ambient) + demo app + chaos scripts (`demo/`)
-- [ ] The video
+- [x] Demo environment: kind + Istio (ambient) + demo app + chaos scripts (`demo/`)
+- [x] The video (`demo/video/meshmedic-demo.mp4`, every frame from a real episode)
+
+**M1 is done.**
 
 ## M2: mesh-incidents-bench
 

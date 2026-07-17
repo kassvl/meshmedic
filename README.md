@@ -3,6 +3,12 @@
 Incident-time remediation for Istio. When the mesh degrades, MeshMedic turns
 the Prometheus signal into a reviewable GitOps pull request that fixes it.
 
+![MeshMedic demo: chaos to merged PR to healed mesh](demo/video/meshmedic-demo.gif)
+
+*Every frame above is real: a live kind + Istio ambient mesh, a real latency
+fault, the pull request MeshMedic opened with evidence from Prometheus, a
+human merge, and Argo CD syncing the fix. Recording script in `demo/video/`.*
+
 **Status: early development.** The core loop works end to end today: the
 detector evaluates catalog signals against Prometheus, and when a scenario
 fires, MeshMedic opens a pull request in your config repository with the
