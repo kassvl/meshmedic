@@ -27,10 +27,29 @@ ambient-mesh AIOps thesis) with a harness that scores any tool's diagnosis
 and remediation against them. Publish results for the obvious contenders.
 Nobody has a mesh incident benchmark today; the leaderboard is the point.
 
+## M2.5: win the benchmark outright
+
+The bench (M2) found the gaps; close them and grow the lead where agentic
+investigators structurally cannot follow:
+
+- [x] Labeled evidence: per-workload breakdowns survive into the report, so
+  the diagnosis names the offending subset, not just a ratio
+- [x] Configuration evidence: read-only object reads (kubectl, no client-go)
+  put the config-level root cause next to the metric symptom, deterministic
+  and LLM-free
+- [x] Cascade suppression: overflow 503s inflating the 5xx ratio is one
+  incident, not two
+- [x] Ambient L4 signal (ztunnel `istio_tcp_connections_closed_total`
+  DENY) for the strict-mTLS scenario every tool missed, MeshMedic included
+- [x] Bench v2: noise-only scenario (false-positive discipline), wall-time
+  and investigation-side-effect metrics per run
+
+**M2.5 is done**: 30/30 on bench v0.2 (a disclosed home game; outside
+scenarios welcome), with 0 cluster objects touched across every run.
+
 ## M3: live inside the ecosystem
 
 - k8sgpt custom analyzer covering the catalog's detection side
-- HolmesGPT toolset contribution so its agent can read mesh state properly
 - Demo at an Istio community meeting, then a CFP for a lightning talk
 
 ## M4: earn the right to be a project
