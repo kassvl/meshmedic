@@ -9,17 +9,23 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
 	"text/template"
 	"time"
 
 	"github.com/kassvl/meshmedic/pkg/catalog"
+	"github.com/kassvl/meshmedic/pkg/kube"
 	"github.com/kassvl/meshmedic/pkg/prom"
 )
 
 // Querier is the slice of Prometheus the detector needs. prom.Client
-// satisfies it; tests use scripted fakes.
+// satisfies it; tests use scripted fakes. Signals go through Query, which
+// enforces a single aggregated value; evidence goes through QuerySeries so
+// labels survive into the report.
 type Querier interface {
 	Query(ctx context.Context, promql string) (float64, error)
+	QuerySeries(ctx context.Context, promql string) ([]prom.Sample, error)
 }
 
 // Target is one set of template parameters watched against the catalog.
@@ -40,21 +46,65 @@ func (t Target) wants(id string) bool {
 	return false
 }
 
+// ObjectReader is the slice of the cluster the detector may read for
+// configuration evidence. kube.Reader satisfies it; nil disables object
+// evidence entirely, and metric detection works the same either way.
+type ObjectReader interface {
+	Get(ctx context.Context, apiVersion, kind, namespace, name string) (map[string]any, error)
+}
+
+// TriageReader is the slice of the cluster the detector may read for triage
+// evidence: recent logs and recent rollouts. kube.Reader satisfies it; nil
+// disables triage evidence.
+type TriageReader interface {
+	DeploymentNames(ctx context.Context, namespace string) ([]string, error)
+	Logs(ctx context.Context, namespace, deployment string, sinceSeconds, tailLines int) (string, error)
+	RecentRollouts(ctx context.Context, namespace string, within time.Duration) ([]kube.Rollout, error)
+}
+
 // Incident is a scenario firing for a target.
 type Incident struct {
-	Scenario catalog.Scenario
-	Params   map[string]string
-	Value    float64
-	Since    time.Time
-	Evidence []EvidenceResult
+	Scenario        catalog.Scenario
+	Params          map[string]string
+	Value           float64
+	Since           time.Time
+	Evidence        []EvidenceResult
+	ObjectEvidence  []ObjectEvidenceResult
+	LogEvidence     []LogEvidenceResult
+	RolloutEvidence []RolloutEvidenceResult
+}
+
+// LogEvidenceResult is one log sweep's outcome: per-deployment matched lines.
+type LogEvidenceResult struct {
+	Name    string
+	Matches map[string][]string // deployment -> matching log lines
+	Err     error
+}
+
+// RolloutEvidenceResult is one rollout query's outcome.
+type RolloutEvidenceResult struct {
+	Name     string
+	Rollouts []kube.Rollout
+	Err      error
 }
 
 // EvidenceResult is one evidence query's outcome. A failed evidence query
-// never blocks the incident; the error travels with it instead.
+// never blocks the incident; the error travels with it instead. Samples keep
+// their labels: a per-workload breakdown is only evidence if the workload
+// names survive.
 type EvidenceResult struct {
+	Name    string
+	PromQL  string
+	Samples []prom.Sample
+	Err     error
+}
+
+// ObjectEvidenceResult is one object query's outcome. Like metric evidence,
+// a failure never blocks the incident; the error travels with it.
+type ObjectEvidenceResult struct {
 	Name   string
-	PromQL string
-	Value  float64
+	Ref    string            // Kind namespace/name, for the report
+	Fields map[string]string // dotted path -> rendered value
 	Err    error
 }
 
@@ -84,6 +134,13 @@ type Detector struct {
 	querier   Querier
 	handle    HandlerFunc
 	states    map[string]*entry
+
+	// Objects enables configuration evidence when set. Defaults to nil:
+	// the CLI wires it when kubectl is available.
+	Objects ObjectReader
+
+	// Triage enables log and rollout evidence when set. Defaults to nil.
+	Triage TriageReader
 
 	// Log receives non-fatal evaluation problems (template errors, query
 	// failures). Defaults to discarding them; the CLI wires it to stderr.
@@ -117,19 +174,58 @@ func (d *Detector) Run(ctx context.Context, interval time.Duration) {
 
 // Tick evaluates every watched target/scenario pair once. The caller owns
 // the clock, which keeps the state machine testable without sleeping.
+//
+// Evaluation is two-pass per target: first every signal advances its state
+// machine, then cascade suppression is decided across the whole target, and
+// only unsuppressed incidents are delivered. A suppressed scenario stays
+// pending, so it still fires later if its suppressor clears first.
 func (d *Detector) Tick(ctx context.Context, now time.Time) {
 	for ti, t := range d.targets {
+		type dueIncident struct {
+			key   string
+			s     catalog.Scenario
+			value float64
+		}
+		var due []dueIncident
+		inBreach := map[string]bool{}
 		for _, s := range d.scenarios {
 			if !t.wants(s.ID) {
 				continue
 			}
-			d.evaluate(ctx, now, ti, t, s)
+			key := fmt.Sprintf("%d/%s", ti, s.ID)
+			value, isDue := d.evaluateSignal(ctx, now, key, t, s)
+			if isDue {
+				due = append(due, dueIncident{key, s, value})
+			}
+			if d.states[key].state != inactive {
+				inBreach[s.ID] = true
+			}
+		}
+
+		suppressedBy := map[string]string{}
+		for _, s := range d.scenarios {
+			if !inBreach[s.ID] {
+				continue
+			}
+			for _, id := range s.Suppresses {
+				suppressedBy[id] = s.ID
+			}
+		}
+
+		for _, du := range due {
+			if by, ok := suppressedBy[du.s.ID]; ok {
+				d.Log("%s: suppressed by %s: cascade symptom, not a second incident", du.key, by)
+				continue
+			}
+			d.deliver(ctx, du.key, du.s, t, du.value)
 		}
 	}
 }
 
-func (d *Detector) evaluate(ctx context.Context, now time.Time, ti int, t Target, s catalog.Scenario) {
-	key := fmt.Sprintf("%d/%s", ti, s.ID)
+// evaluateSignal advances one scenario's state machine and reports whether
+// its incident is due this tick. Delivery happens in Tick, after cascade
+// suppression is decided across the target.
+func (d *Detector) evaluateSignal(ctx context.Context, now time.Time, key string, t Target, s catalog.Scenario) (float64, bool) {
 	st := d.states[key]
 	if st == nil {
 		st = &entry{}
@@ -139,50 +235,59 @@ func (d *Detector) evaluate(ctx context.Context, now time.Time, ti int, t Target
 	query, err := renderQuery(s.ID, s.Signal.PromQL, t.Params)
 	if err != nil {
 		d.Log("%s: rendering signal: %v", key, err)
-		return
+		return 0, false
 	}
 	value, err := d.querier.Query(ctx, query)
 	switch {
 	case errors.Is(err, prom.ErrNoData):
 		// No traffic is not an incident; clear any progress.
 		st.state, st.since = inactive, time.Time{}
-		return
+		return 0, false
 	case err != nil:
 		// A transient scrape failure must not reset a pending breach,
 		// so the state survives the error untouched.
 		d.Log("%s: query: %v", key, err)
-		return
+		return 0, false
 	}
 
 	if !breached(value, s.Signal.Comparison, s.Signal.Threshold) {
 		st.state, st.since = inactive, time.Time{}
-		return
+		return value, false
 	}
 
 	switch st.state {
 	case inactive:
 		st.state, st.since = pending, now
-		// A zero for-duration fires on the next evaluation below, so
-		// fall through by re-checking immediately.
+		// A zero for-duration is due on this same tick, so fall through
+		// by re-checking immediately.
 		fallthrough
 	case pending:
 		if now.Sub(st.since) >= forDuration(s) {
-			err := d.handle(ctx, Incident{
-				Scenario: s,
-				Params:   t.Params,
-				Value:    value,
-				Since:    st.since,
-				Evidence: d.gatherEvidence(ctx, s, t.Params),
-			})
-			if err != nil {
-				d.Log("%s: handler failed, keeping the episode for retry: %v", key, err)
-				return
-			}
-			st.state = firing
+			return value, true
 		}
 	case firing:
 		// Already delivered; stay quiet until the condition clears.
 	}
+	return value, false
+}
+
+func (d *Detector) deliver(ctx context.Context, key string, s catalog.Scenario, t Target, value float64) {
+	st := d.states[key]
+	err := d.handle(ctx, Incident{
+		Scenario:        s,
+		Params:          t.Params,
+		Value:           value,
+		Since:           st.since,
+		Evidence:        d.gatherEvidence(ctx, s, t.Params),
+		ObjectEvidence:  d.gatherObjectEvidence(ctx, s, t.Params),
+		LogEvidence:     d.gatherLogEvidence(ctx, s, t.Params),
+		RolloutEvidence: d.gatherRolloutEvidence(ctx, s, t.Params),
+	})
+	if err != nil {
+		d.Log("%s: handler failed, keeping the episode for retry: %v", key, err)
+		return
+	}
+	st.state = firing
 }
 
 func (d *Detector) gatherEvidence(ctx context.Context, s catalog.Scenario, params map[string]string) []EvidenceResult {
@@ -191,8 +296,115 @@ func (d *Detector) gatherEvidence(ctx context.Context, s catalog.Scenario, param
 		r := EvidenceResult{Name: q.Name}
 		r.PromQL, r.Err = renderQuery(s.ID+"/"+q.Name, q.PromQL, params)
 		if r.Err == nil {
-			r.Value, r.Err = d.querier.Query(ctx, r.PromQL)
+			r.Samples, r.Err = d.querier.QuerySeries(ctx, r.PromQL)
 		}
+		results = append(results, r)
+	}
+	return results
+}
+
+func (d *Detector) gatherObjectEvidence(ctx context.Context, s catalog.Scenario, params map[string]string) []ObjectEvidenceResult {
+	if d.Objects == nil || len(s.ObjectEvidence) == 0 {
+		return nil
+	}
+	results := make([]ObjectEvidenceResult, 0, len(s.ObjectEvidence))
+	for _, q := range s.ObjectEvidence {
+		results = append(results, d.objectEvidence(ctx, s, q, params))
+	}
+	return results
+}
+
+func (d *Detector) objectEvidence(ctx context.Context, s catalog.Scenario, q catalog.ObjectQuery, params map[string]string) ObjectEvidenceResult {
+	r := ObjectEvidenceResult{Name: q.Name}
+	name, err := renderQuery(s.ID+"/"+q.Name+"/object", q.Object, params)
+	if err != nil {
+		r.Err = err
+		return r
+	}
+	ns, err := renderQuery(s.ID+"/"+q.Name+"/namespace", q.Namespace, params)
+	if err != nil {
+		r.Err = err
+		return r
+	}
+	r.Ref = q.Kind + " " + ns + "/" + name
+	obj, err := d.Objects.Get(ctx, q.APIVersion, q.Kind, ns, name)
+	if err != nil {
+		r.Err = err
+		return r
+	}
+	r.Fields = map[string]string{}
+	for _, path := range q.Fields {
+		val, err := kube.ExtractField(obj, path)
+		if err != nil {
+			val = fmt.Sprintf("unavailable (%v)", err)
+		}
+		r.Fields[path] = val
+	}
+	return r
+}
+
+func (d *Detector) gatherLogEvidence(ctx context.Context, s catalog.Scenario, params map[string]string) []LogEvidenceResult {
+	if d.Triage == nil || len(s.LogEvidence) == 0 {
+		return nil
+	}
+	var results []LogEvidenceResult
+	for _, q := range s.LogEvidence {
+		r := LogEvidenceResult{Name: q.Name}
+		ns, err := renderQuery(s.ID+"/"+q.Name+"/namespace", q.Namespace, params)
+		if err != nil {
+			r.Err = err
+			results = append(results, r)
+			continue
+		}
+		// Patterns were validated at catalog load, so compilation here
+		// cannot fail; ORing them keeps one pass per log line.
+		re := regexp.MustCompile("(?i)" + strings.Join(q.Patterns, "|"))
+		deployments, err := d.Triage.DeploymentNames(ctx, ns)
+		if err != nil {
+			r.Err = err
+			results = append(results, r)
+			continue
+		}
+		since, maxLines := q.SinceSeconds, q.MaxLines
+		if since <= 0 {
+			since = 300
+		}
+		if maxLines <= 0 {
+			maxLines = 10
+		}
+		r.Matches = map[string][]string{}
+		for _, dep := range deployments {
+			logs, err := d.Triage.Logs(ctx, ns, dep, since, 200)
+			if err != nil {
+				d.Log("%s/%s: logs for %s: %v", s.ID, q.Name, dep, err)
+				continue
+			}
+			for _, line := range strings.Split(logs, "\n") {
+				if len(r.Matches[dep]) >= maxLines {
+					break
+				}
+				if re.MatchString(line) {
+					r.Matches[dep] = append(r.Matches[dep], strings.TrimSpace(line))
+				}
+			}
+		}
+		results = append(results, r)
+	}
+	return results
+}
+
+func (d *Detector) gatherRolloutEvidence(ctx context.Context, s catalog.Scenario, params map[string]string) []RolloutEvidenceResult {
+	if d.Triage == nil || len(s.RolloutEvidence) == 0 {
+		return nil
+	}
+	var results []RolloutEvidenceResult
+	for _, q := range s.RolloutEvidence {
+		r := RolloutEvidenceResult{Name: q.Name}
+		ns, err := renderQuery(s.ID+"/"+q.Name+"/namespace", q.Namespace, params)
+		if err == nil {
+			r.Rollouts, err = d.Triage.RecentRollouts(ctx, ns, time.Duration(q.WithinMinutes)*time.Minute)
+		}
+		r.Err = err
 		results = append(results, r)
 	}
 	return results

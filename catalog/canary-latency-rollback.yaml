@@ -27,6 +27,18 @@ evidence:
       /
       sum(rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
       destination_service_namespace="{{.namespace}}"}[2m]))
+objectEvidence:
+  # The canary Deployment's container env is where injected timing/error
+  # knobs and misconfigured limits live; showing it puts the config-level
+  # cause next to the latency symptom in the same report.
+  - name: canary-deployment-env
+    apiVersion: apps/v1
+    kind: Deployment
+    object: "{{.service}}-{{.subset}}"
+    namespace: "{{.namespace}}"
+    fields:
+      - spec.template.spec.containers[*].env
+      - spec.template.spec.containers[*].resources
 remediation:
   target:
     apiVersion: networking.istio.io/v1

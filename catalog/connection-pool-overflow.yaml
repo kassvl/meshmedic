@@ -16,14 +16,32 @@ signal:
   threshold: 1
   for: 60s
 evidence:
-  - name: destination-cpu-headroom
+  # Mesh-native queries only: the previous cpu/envoy_cluster evidence needed
+  # cadvisor scraping and the Envoy stats annotation, neither of which the
+  # stock Istio Prometheus addon provides, so it always came back empty.
+  - name: uo-rate-by-workload
     promql: >
-      sum(rate(container_cpu_usage_seconds_total{namespace="{{.namespace}}", pod=~"{{.workload}}-.*"}[2m]))
-      /
-      sum(kube_pod_container_resource_limits{namespace="{{.namespace}}", pod=~"{{.workload}}-.*", resource="cpu"})
-  - name: active-connections
+      sum by (destination_workload) (rate(istio_requests_total{reporter=~"source|waypoint", destination_service_name="{{.service}}",
+      destination_service_namespace="{{.namespace}}", response_flags="UO"}[2m]))
+  - name: request-rate-by-workload
     promql: >
-      sum(envoy_cluster_upstream_cx_active{cluster_name=~"outbound\\|.*\\|{{.service}}\\.{{.namespace}}\\..*"})
+      sum by (destination_workload) (rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
+      destination_service_namespace="{{.namespace}}"}[2m]))
+objectEvidence:
+  # The saturation call (raise limits vs scale the workload) needs the
+  # destination's configured resources next to the traffic numbers.
+  - name: destination-resources
+    apiVersion: apps/v1
+    kind: Deployment
+    object: "{{.workload}}"
+    namespace: "{{.namespace}}"
+    fields:
+      - spec.replicas
+      - spec.template.spec.containers[*].resources
+suppresses:
+  # Overflow-shed requests surface as 503s and inflate the 5xx ratio; that
+  # is this incident's symptom, not a second incident.
+  - error-surge-outlier-ejection
 remediation:
   target:
     apiVersion: networking.istio.io/v1
@@ -48,6 +66,7 @@ guardrails:
   requiresApproval: true
   maxAppliesPerHour: 1
 rollback: >
-  If UO drops but destination CPU saturates, the pool limit was doing its job;
-  revert this patch and scale the destination workload instead. The reviewer
-  should check the destination-cpu-headroom evidence before merging.
+  If UO drops but the destination starts failing under real load, the pool
+  limit was doing its job; revert this patch and scale the destination
+  workload instead. The reviewer should weigh request-rate-by-workload
+  against the destination-resources configuration evidence before merging.

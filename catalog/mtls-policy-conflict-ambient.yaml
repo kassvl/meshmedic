@@ -1,0 +1,75 @@
+id: mtls-policy-conflict-ambient
+title: Plaintext client denied at L4 by ztunnel (ambient strict mTLS)
+severity: critical
+description: >
+  A client without mesh identity keeps opening plaintext connections to a
+  service in a STRICT-mTLS ambient namespace. ztunnel rejects each attempt
+  at L4, so nothing ever reaches the L7 request metrics: request-based
+  monitoring stays green while the client fails every call. The signal
+  lives one layer down, in ztunnel's TCP telemetry: connections closed with
+  response_flags=DENY for the destination service. The reviewable
+  de-escalation is a scoped PERMISSIVE PeerAuthentication on the service
+  while the client gets enrolled into the mesh. This is deliberately a
+  temporary security downgrade; the PR body says so and links the revert.
+signal:
+  promql: >
+    sum(rate(istio_tcp_connections_closed_total{reporter="destination",
+    destination_service_name="{{.service}}", destination_service_namespace="{{.namespace}}",
+    response_flags="DENY"}[2m]))
+  comparison: ">"
+  threshold: 0.2
+  for: 60s
+evidence:
+  # Names exactly who is being denied and shows they have no mesh identity
+  # (source_principal=unknown): the diagnosis in one row.
+  - name: denied-connections-by-source
+    promql: >
+      sum by (source_workload, source_workload_namespace, source_principal)
+      (rate(istio_tcp_connections_closed_total{reporter="destination",
+      destination_service_name="{{.service}}", destination_service_namespace="{{.namespace}}",
+      response_flags="DENY"}[5m]))
+  - name: connection-security-breakdown
+    promql: >
+      sum by (connection_security_policy)
+      (rate(istio_tcp_connections_opened_total{reporter="destination",
+      destination_service_name="{{.service}}", destination_service_namespace="{{.namespace}}"}[5m]))
+objectEvidence:
+  # The namespace's PeerAuthentication policies are the config-level cause;
+  # object "*" lists them all, so the STRICT policy shows up by name.
+  - name: peer-authentication-policies
+    apiVersion: security.istio.io/v1
+    kind: PeerAuthentication
+    object: "*"
+    namespace: "{{.namespace}}"
+    fields:
+      - items[*].metadata.name
+      - items[*].spec.mtls.mode
+suppresses:
+  # In a mixed sidecar/ambient mesh both views of this incident can fire;
+  # the L4 view is closer to the root cause, one PR is enough.
+  - mtls-policy-conflict
+remediation:
+  target:
+    apiVersion: security.istio.io/v1
+    kind: PeerAuthentication
+  action: scoped-permissive-fallback
+  patchTemplate: |
+    apiVersion: security.istio.io/v1
+    kind: PeerAuthentication
+    metadata:
+      name: {{.service}}-mtls-fallback
+      namespace: {{.namespace}}
+    spec:
+      selector:
+        matchLabels:
+          app: {{.service}}
+      mtls:
+        mode: PERMISSIVE
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 1
+rollback: >
+  Enroll the denied client into the mesh (ambient label on its namespace or
+  a sidecar) and restore STRICT. The denied-connections-by-source evidence
+  names exactly which workloads still lack mesh identity. PERMISSIVE left
+  in place indefinitely defeats the point of mesh mTLS.

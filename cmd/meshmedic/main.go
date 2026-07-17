@@ -23,6 +23,7 @@ import (
 	"github.com/kassvl/meshmedic/pkg/catalog"
 	"github.com/kassvl/meshmedic/pkg/detect"
 	"github.com/kassvl/meshmedic/pkg/gitops"
+	"github.com/kassvl/meshmedic/pkg/kube"
 	"github.com/kassvl/meshmedic/pkg/prom"
 	"github.com/kassvl/meshmedic/pkg/remediate"
 	"github.com/kassvl/meshmedic/pkg/report"
@@ -191,6 +192,12 @@ func runWatch(args []string) {
 
 	d := detect.New(scenarios, cfg.Targets, prom.NewClient(cfg.Prometheus), handler)
 	d.Log = logger.Printf
+	if reader, err := kube.NewReader(); err != nil {
+		logger.Printf("configuration and triage evidence disabled: %v", err)
+	} else {
+		d.Objects = reader
+		d.Triage = reader
+	}
 
 	logger.Printf("watching %d scenarios for %d targets against %s every %s",
 		len(scenarios), len(cfg.Targets), cfg.Prometheus, cfg.IntervalDuration())

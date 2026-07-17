@@ -4,15 +4,23 @@ package catalog
 // detector can recognize and the patch that answers it. Catalog entries are
 // reviewed by humans; the engine never invents a remediation at runtime.
 type Scenario struct {
-	ID          string      `yaml:"id"`
-	Title       string      `yaml:"title"`
-	Severity    string      `yaml:"severity"`
-	Description string      `yaml:"description"`
-	Signal      Signal      `yaml:"signal"`
-	Evidence    []Query     `yaml:"evidence"`
-	Remediation Remediation `yaml:"remediation"`
-	Guardrails  Guardrails  `yaml:"guardrails"`
-	Rollback    string      `yaml:"rollback"`
+	ID              string         `yaml:"id"`
+	Title           string         `yaml:"title"`
+	Severity        string         `yaml:"severity"`
+	Description     string         `yaml:"description"`
+	Signal          Signal         `yaml:"signal"`
+	Evidence        []Query        `yaml:"evidence"`
+	ObjectEvidence  []ObjectQuery  `yaml:"objectEvidence"`
+	LogEvidence     []LogQuery     `yaml:"logEvidence"`
+	RolloutEvidence []RolloutQuery `yaml:"rolloutEvidence"`
+	Remediation     Remediation    `yaml:"remediation"`
+	Guardrails      Guardrails     `yaml:"guardrails"`
+	Rollback        string         `yaml:"rollback"`
+
+	// Suppresses names scenarios that are symptoms of this one: while this
+	// scenario is in breach for a target, the listed scenarios stay quiet
+	// there. Overflow 503s inflating the 5xx ratio is one incident, not two.
+	Suppresses []string `yaml:"suppresses"`
 }
 
 // Signal is the PromQL condition that fires the scenario. The query may use
@@ -30,6 +38,42 @@ type Signal struct {
 type Query struct {
 	Name   string `yaml:"name"`
 	PromQL string `yaml:"promql"`
+}
+
+// ObjectQuery reads fields off one live Kubernetes object when a scenario
+// fires, so the report can put the config-level cause (a bad env var, a
+// wrong policy mode) next to the metric symptom. Object and namespace accept
+// the same template parameters as the signal. Reads go through kubectl and
+// are the only cluster access the engine has; it never writes.
+type ObjectQuery struct {
+	Name       string   `yaml:"name"`
+	APIVersion string   `yaml:"apiVersion"`
+	Kind       string   `yaml:"kind"`
+	Object     string   `yaml:"object"`    // object name, template
+	Namespace  string   `yaml:"namespace"` // template; empty means cluster-scoped
+	Fields     []string `yaml:"fields"`    // dotted paths, e.g. spec.template.spec.containers[*].env
+}
+
+// LogQuery sweeps recent logs of every deployment in a namespace for known
+// failure patterns when a scenario fires. It is the deterministic stand-in
+// for "go read the client's logs": the patterns are curated, reviewable
+// signatures (resolver failures, refused connections, TLS errors), and only
+// matching lines reach the report.
+type LogQuery struct {
+	Name         string   `yaml:"name"`
+	Namespace    string   `yaml:"namespace"` // template
+	Patterns     []string `yaml:"patterns"`  // regexes, ORed
+	SinceSeconds int      `yaml:"sinceSeconds"`
+	MaxLines     int      `yaml:"maxLines"` // cap on matched lines per deployment
+}
+
+// RolloutQuery attaches recent deployment rollouts in a namespace, each with
+// the line diff between its previous and current pod template. A bad deploy's
+// root cause is usually a line in that diff.
+type RolloutQuery struct {
+	Name          string `yaml:"name"`
+	Namespace     string `yaml:"namespace"` // template
+	WithinMinutes int    `yaml:"withinMinutes"`
 }
 
 // Remediation describes the patch a scenario renders when it fires.

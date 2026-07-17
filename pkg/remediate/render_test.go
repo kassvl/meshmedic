@@ -28,6 +28,12 @@ func TestRenderEveryCatalogEntry(t *testing.T) {
 			t.Errorf("%s: %v", s.ID, err)
 			continue
 		}
+		if s.Remediation.Action == "report-only" {
+			if !strings.Contains(out, "report-only") {
+				t.Errorf("%s: report-only placeholder missing", s.ID)
+			}
+			continue
+		}
 		if !strings.Contains(out, "prod") {
 			t.Errorf("%s: namespace parameter not substituted into patch", s.ID)
 		}

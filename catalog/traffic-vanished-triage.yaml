@@ -1,0 +1,68 @@
+id: traffic-vanished-triage
+title: Traffic to a service vanished (clients went silent)
+severity: critical
+description: >
+  The service was receiving steady traffic ten minutes ago and now receives
+  none, while its own pods stay Running. This is not a mesh fault signature;
+  it is the absence of one, and the cause usually sits one layer above the
+  mesh: a bad client rollout, a broken target hostname, a dead upstream
+  caller. No patch can be proposed automatically because the failing party
+  is not the service itself. Instead this scenario assembles a triage
+  dossier: who used to call the service, which workloads in the namespace
+  are logging known failure signatures right now, and what rolled out
+  recently with the exact template diff. The root cause of a bad deploy is
+  usually a line in that diff.
+signal:
+  # Both sides use `or vector(0)` because a fully stopped flow does not
+  # return zero, it returns no series at all - which is exactly the case
+  # this scenario exists to catch. The bool product is 1 only when traffic
+  # was flowing 10 minutes ago and is gone now.
+  promql: >
+    ((sum(rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
+    destination_service_namespace="{{.namespace}}"}[2m])) or vector(0)) < bool 0.05)
+    *
+    ((sum(rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
+    destination_service_namespace="{{.namespace}}"}[2m] offset 10m)) or vector(0)) > bool 0.5)
+  comparison: ">"
+  threshold: 0.5
+  for: 60s
+evidence:
+  - name: former-callers-by-source
+    promql: >
+      sum by (source_workload, source_workload_namespace)
+      (rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
+      destination_service_namespace="{{.namespace}}"}[5m] offset 10m))
+logEvidence:
+  - name: client-failure-log-sweep
+    namespace: "{{.namespace}}"
+    sinceSeconds: 300
+    maxLines: 8
+    patterns:
+      - "could not resolve"
+      - "couldn't resolve"
+      - "resolve host"
+      - "name or service not known"
+      - "temporary failure in name resolution"
+      - "connection refused"
+      - "connection timed out"
+      - "no route to host"
+      - "i/o timeout"
+      - "certificate"
+      - "tls handshake"
+rolloutEvidence:
+  - name: recent-rollouts
+    namespace: "{{.namespace}}"
+    withinMinutes: 30
+remediation:
+  target:
+    apiVersion: apps/v1
+    kind: Deployment
+  action: report-only
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 2
+rollback: >
+  Not applicable: nothing is applied. If the recent-rollouts diff shows a
+  suspicious change in a calling workload, `kubectl rollout undo` on that
+  deployment is the usual first move; the dossier names the deployment and
+  the changed lines so the operator can decide in one look.

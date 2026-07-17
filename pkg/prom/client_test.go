@@ -59,3 +59,44 @@ func TestQueryMultiSampleIsError(t *testing.T) {
 		t.Fatalf("got %v, want aggregation error", err)
 	}
 }
+
+// fakeLabeledPrometheus serves a fixed two-sample vector with metric labels,
+// the shape a sum by (destination_workload) evidence query returns.
+func fakeLabeledPrometheus(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/query" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprint(w, `{"status":"success","data":{"resultType":"vector","result":[`+
+			`{"metric":{"destination_workload":"payments-v2"},"value":[0,"0.19"]},`+
+			`{"metric":{"destination_workload":"payments-v1"},"value":[0,"0.002"]}]}}`)
+	}))
+}
+
+func TestQuerySeriesKeepsLabels(t *testing.T) {
+	srv := fakeLabeledPrometheus(t)
+	defer srv.Close()
+
+	samples, err := NewClient(srv.URL).QuerySeries(context.Background(), "up")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(samples) != 2 {
+		t.Fatalf("got %d samples, want 2", len(samples))
+	}
+	if samples[0].Labels["destination_workload"] != "payments-v2" || samples[0].Value != 0.19 {
+		t.Fatalf("first sample %+v, want payments-v2 at 0.19", samples[0])
+	}
+}
+
+func TestQuerySeriesEmptyVectorIsErrNoData(t *testing.T) {
+	srv := fakePrometheus(t)
+	defer srv.Close()
+
+	_, err := NewClient(srv.URL).QuerySeries(context.Background(), "up")
+	if !errors.Is(err, ErrNoData) {
+		t.Fatalf("got %v, want ErrNoData", err)
+	}
+}

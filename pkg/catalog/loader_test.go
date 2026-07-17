@@ -1,14 +1,20 @@
 package catalog
 
-import "testing"
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestLoadRealCatalog(t *testing.T) {
 	scenarios, err := LoadDir("../../catalog")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(scenarios) != 7 {
-		t.Fatalf("got %d scenarios, want 7", len(scenarios))
+	if len(scenarios) != 9 {
+		t.Fatalf("got %d scenarios, want 9", len(scenarios))
 	}
 	for i := 1; i < len(scenarios); i++ {
 		if scenarios[i-1].ID >= scenarios[i].ID {
@@ -22,6 +28,53 @@ func TestLoadRealCatalog(t *testing.T) {
 		if s.Signal.For == "" {
 			t.Errorf("%s: signal.for is empty, transient blips would fire remediation", s.ID)
 		}
+	}
+}
+
+// writeScenarios lays out a temp catalog where each entry may suppress others.
+func writeScenarios(t *testing.T, suppresses map[string][]string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for id, sup := range suppresses {
+		doc := fmt.Sprintf(`id: %s
+title: %s
+signal:
+  promql: up
+  comparison: ">"
+  threshold: 1
+remediation:
+  target:
+    kind: VirtualService
+  patchTemplate: "kind: VirtualService"
+`, id, id)
+		for _, s := range sup {
+			doc += fmt.Sprintf("suppresses:\n  - %s\n", s)
+		}
+		if err := os.WriteFile(filepath.Join(dir, id+".yaml"), []byte(doc), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
+func TestLoadRejectsUnknownSuppressReference(t *testing.T) {
+	dir := writeScenarios(t, map[string][]string{"a": {"ghost"}})
+	if _, err := LoadDir(dir); err == nil || !strings.Contains(err.Error(), "ghost") {
+		t.Fatalf("got %v, want unknown-reference error naming ghost", err)
+	}
+}
+
+func TestLoadRejectsSelfSuppression(t *testing.T) {
+	dir := writeScenarios(t, map[string][]string{"a": {"a"}})
+	if _, err := LoadDir(dir); err == nil || !strings.Contains(err.Error(), "itself") {
+		t.Fatalf("got %v, want self-suppression error", err)
+	}
+}
+
+func TestLoadRejectsMutualSuppression(t *testing.T) {
+	dir := writeScenarios(t, map[string][]string{"a": {"b"}, "b": {"a"}})
+	if _, err := LoadDir(dir); err == nil || !strings.Contains(err.Error(), "each other") {
+		t.Fatalf("got %v, want mutual-suppression error", err)
 	}
 }
 

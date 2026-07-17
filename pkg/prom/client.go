@@ -1,5 +1,6 @@
 // Package prom is a minimal client for the Prometheus HTTP API, covering
-// exactly what the detector needs: an instant query reduced to one number.
+// exactly what the detector needs: instant queries, reduced to one number
+// for signals and to labeled samples for evidence.
 package prom
 
 import (
@@ -17,6 +18,12 @@ import (
 // ErrNoData reports a query that returned an empty vector. Callers decide
 // whether absence of data means healthy or broken; the client does not guess.
 var ErrNoData = errors.New("query returned no samples")
+
+// Sample is one labeled sample from an instant query's result vector.
+type Sample struct {
+	Labels map[string]string
+	Value  float64
+}
 
 // Client talks to one Prometheus server.
 type Client struct {
@@ -36,18 +43,38 @@ func NewClient(baseURL string) *Client {
 // A result with more than one sample is an error: catalog signals must
 // aggregate, otherwise the threshold comparison is meaningless.
 func (c *Client) Query(ctx context.Context, promql string) (float64, error) {
+	samples, err := c.instant(ctx, promql)
+	if err != nil {
+		return 0, err
+	}
+	if len(samples) > 1 {
+		return 0, fmt.Errorf("prometheus: %d samples, catalog signals must aggregate to one", len(samples))
+	}
+	return samples[0].Value, nil
+}
+
+// QuerySeries runs an instant query and returns every sample with its
+// labels intact. Evidence queries use it: a per-workload breakdown is only
+// evidence if the workload names survive into the report.
+func (c *Client) QuerySeries(ctx context.Context, promql string) ([]Sample, error) {
+	return c.instant(ctx, promql)
+}
+
+// instant runs the query and decodes the full result vector. An empty
+// vector is ErrNoData.
+func (c *Client) instant(ctx context.Context, promql string) ([]Sample, error) {
 	u := c.base + "/api/v1/query?query=" + url.QueryEscape(promql)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("prometheus: %s", resp.Status)
+		return nil, fmt.Errorf("prometheus: %s", resp.Status)
 	}
 
 	var body struct {
@@ -55,29 +82,34 @@ func (c *Client) Query(ctx context.Context, promql string) (float64, error) {
 		Data   struct {
 			ResultType string `json:"resultType"`
 			Result     []struct {
-				Value [2]any `json:"value"`
+				Metric map[string]string `json:"metric"`
+				Value  [2]any            `json:"value"`
 			} `json:"result"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return 0, fmt.Errorf("prometheus: decoding response: %w", err)
+		return nil, fmt.Errorf("prometheus: decoding response: %w", err)
 	}
 	if body.Status != "success" {
-		return 0, fmt.Errorf("prometheus: response status %q", body.Status)
+		return nil, fmt.Errorf("prometheus: response status %q", body.Status)
 	}
 	if body.Data.ResultType != "vector" {
-		return 0, fmt.Errorf("prometheus: unexpected result type %q", body.Data.ResultType)
+		return nil, fmt.Errorf("prometheus: unexpected result type %q", body.Data.ResultType)
 	}
-	results := body.Data.Result
-	if len(results) == 0 {
-		return 0, ErrNoData
+	if len(body.Data.Result) == 0 {
+		return nil, ErrNoData
 	}
-	if len(results) > 1 {
-		return 0, fmt.Errorf("prometheus: %d samples, catalog signals must aggregate to one", len(results))
+	samples := make([]Sample, 0, len(body.Data.Result))
+	for _, r := range body.Data.Result {
+		s, ok := r.Value[1].(string)
+		if !ok {
+			return nil, fmt.Errorf("prometheus: malformed sample value")
+		}
+		v, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return nil, fmt.Errorf("prometheus: malformed sample value: %w", err)
+		}
+		samples = append(samples, Sample{Labels: r.Metric, Value: v})
 	}
-	s, ok := results[0].Value[1].(string)
-	if !ok {
-		return 0, fmt.Errorf("prometheus: malformed sample value")
-	}
-	return strconv.ParseFloat(s, 64)
+	return samples, nil
 }

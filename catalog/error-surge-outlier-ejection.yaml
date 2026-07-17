@@ -17,10 +17,24 @@ signal:
   threshold: 0.15
   for: 120s
 evidence:
-  - name: errors-by-pod
+  # Grouped by destination_workload, not pod: in ambient the waypoint reports
+  # these metrics, so a pod label would name the waypoint, not the offender.
+  - name: errors-by-workload
     promql: >
-      sum by (pod) (rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
+      sum by (destination_workload) (rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
       destination_service_namespace="{{.namespace}}", response_code=~"5.."}[2m]))
+  - name: requests-by-workload
+    promql: >
+      sum by (destination_workload) (rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
+      destination_service_namespace="{{.namespace}}"}[2m]))
+objectEvidence:
+  - name: suspect-workload-env
+    apiVersion: apps/v1
+    kind: Deployment
+    object: "{{.workload}}"
+    namespace: "{{.namespace}}"
+    fields:
+      - spec.template.spec.containers[*].env
 remediation:
   target:
     apiVersion: networking.istio.io/v1
