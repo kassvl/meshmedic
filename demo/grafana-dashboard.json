@@ -1,0 +1,65 @@
+{
+  "uid": "meshmedic-demo",
+  "title": "MeshMedic Demo: payments",
+  "timezone": "browser",
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "payments p99 latency by version (ms)",
+      "gridPos": { "h": 12, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "DS_UID" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "lineWidth": 2, "fillOpacity": 12 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.99, sum by (le, destination_version) (rate(istio_request_duration_milliseconds_bucket{reporter=\"waypoint\", destination_service_name=\"payments\"}[1m])))",
+          "legendFormat": "{{destination_version}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "payments request rate by version (rps)",
+      "gridPos": { "h": 12, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "DS_UID" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "lineWidth": 2, "fillOpacity": 25, "stacking": { "mode": "normal" } }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (destination_version) (rate(istio_requests_total{reporter=\"waypoint\", destination_service_name=\"payments\"}[1m]))",
+          "legendFormat": "{{destination_version}}"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39
+}

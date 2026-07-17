@@ -1,3 +1,6 @@
 /meshmedic
 dist/
 .DS_Store
+demo/video/node_modules/
+demo/video/clips/
+demo/video/record-run.log
