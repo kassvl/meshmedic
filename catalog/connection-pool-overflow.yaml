@@ -10,7 +10,7 @@ description: >
   makes things worse; the evidence queries make that call reviewable.
 signal:
   promql: >
-    sum(rate(istio_requests_total{reporter="source", destination_service_name="{{.service}}",
+    sum(rate(istio_requests_total{reporter=~"source|waypoint", destination_service_name="{{.service}}",
     destination_service_namespace="{{.namespace}}", response_flags="UO"}[2m]))
   comparison: ">"
   threshold: 1

@@ -10,7 +10,7 @@ description: >
   rotation, then let the workload recover.
 signal:
   promql: >
-    sum(rate(istio_requests_total{reporter="source", destination_service_name="{{.service}}",
+    sum(rate(istio_requests_total{reporter=~"source|waypoint", destination_service_name="{{.service}}",
     destination_service_namespace="{{.namespace}}", response_flags="UH"}[2m]))
   comparison: ">"
   threshold: 1
