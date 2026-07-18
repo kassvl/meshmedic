@@ -1,0 +1,57 @@
+id: route-timeout-too-short
+title: Route timeout shorter than backend latency
+severity: critical
+description: >
+  A VirtualService route timeout is shorter than the backend's real
+  response time, so requests are cut off and returned as HTTP 504 with the
+  UT (upstream request timeout) response flag while the backend is actually
+  healthy and would have answered. The fix is to raise the route timeout
+  above the backend's p99, or remove it, on the specific VirtualService.
+  No patch is proposed automatically: the correct timeout depends on the
+  service's real latency, and regenerating the VirtualService without the
+  operator's existing routes and weights would risk replacing a considered
+  routing table with an improvised one. Instead this entry pins the
+  offending field: the VirtualService and its current timeout, next to the
+  measured backend latency, so the operator can set the right value.
+signal:
+  promql: >
+    sum(rate(istio_requests_total{reporter="waypoint", destination_service_name="{{.service}}",
+    destination_service_namespace="{{.namespace}}", response_flags="UT"}[2m]))
+  comparison: ">"
+  threshold: 0.5
+  for: 60s
+evidence:
+  # The timed-out rate, and the actual p99 the backend is serving, so the
+  # gap between the timeout and reality is visible in the report.
+  - name: timed-out-rate
+    promql: >
+      sum(rate(istio_requests_total{reporter="waypoint", destination_service_name="{{.service}}",
+      destination_service_namespace="{{.namespace}}", response_flags="UT"}[5m]))
+  - name: backend-p99-latency-ms
+    promql: >
+      histogram_quantile(0.99, sum by (le) (rate(istio_request_duration_milliseconds_bucket{reporter=~"destination|waypoint",
+      destination_service_name="{{.service}}", destination_service_namespace="{{.namespace}}"}[5m])))
+objectEvidence:
+  # The VirtualService and its route timeout: the exact field to raise.
+  - name: virtualservice-timeouts
+    apiVersion: networking.istio.io/v1
+    kind: VirtualService
+    object: "{{.service}}"
+    namespace: "{{.namespace}}"
+    fields:
+      - spec.http[*].timeout
+      - spec.http[*].route
+remediation:
+  target:
+    apiVersion: networking.istio.io/v1
+    kind: VirtualService
+  action: report-only
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 1
+rollback: >
+  Not applicable: nothing is applied. Raise the route timeout on the named
+  VirtualService above the backend-p99-latency-ms shown in the evidence, or
+  remove it to fall back to the mesh default, preserving the existing routes
+  and weights. If the backend latency itself is the real problem, the
+  timeout is doing its job and the fix belongs in the backend, not the route.
