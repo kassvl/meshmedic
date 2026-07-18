@@ -1,0 +1,57 @@
+id: no-route-blackhole
+title: Requests hitting no route (404 NR)
+severity: critical
+description: >
+  Callers in the namespace are getting 404s with the NR (no route) flag: their
+  requests match no VirtualService route, so the mesh refuses them before any
+  destination is chosen. The usual cause is a routing edit that narrowed a route
+  (a match condition live traffic no longer satisfies), removed the default
+  route, or renamed a host. Because the request never resolves a destination,
+  this is attributed to the source, not the destination: the report names which
+  caller is being black-holed and lists the namespace's VirtualServices with
+  their match and route, so the broken one is visible. No patch is proposed: the
+  correct route depends on the intended routing table, which only the operator
+  knows; regenerating it blind would replace a considered config with a guess.
+signal:
+  # NR is source-attributed: a no-route request has destination_service_name
+  # "unknown" (validated live on the testbed), so this keys on the source
+  # namespace, not the destination like every other entry.
+  promql: >
+    sum(rate(istio_requests_total{reporter="waypoint",
+    source_workload_namespace="{{.namespace}}", response_flags="NR"}[2m]))
+  comparison: ">"
+  threshold: 0.5
+  for: 60s
+evidence:
+  # Which caller is being black-holed, biggest first.
+  - name: no-route-by-source-workload
+    promql: >
+      sum by (source_workload) (rate(istio_requests_total{reporter="waypoint",
+      source_workload_namespace="{{.namespace}}", response_flags="NR"}[5m]))
+objectEvidence:
+  # Every VirtualService in the namespace with its match and route, so the
+  # over-narrow or removed route is visible next to the 404 NR symptom.
+  - name: virtualservices-in-namespace
+    apiVersion: networking.istio.io/v1
+    kind: VirtualService
+    object: "*"
+    namespace: "{{.namespace}}"
+    fields:
+      - items[*].metadata.name
+      - items[*].spec.hosts
+      - items[*].spec.http[*].match
+      - items[*].spec.http[*].route
+remediation:
+  target:
+    apiVersion: networking.istio.io/v1
+    kind: VirtualService
+  action: report-only
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 1
+rollback: >
+  Not applicable: nothing is applied. Find the VirtualService in the evidence
+  whose match no longer covers the live traffic, or whose default route was
+  removed, and restore the intended route. The source-workload breakdown names
+  the caller being black-holed, and the recent change to that VirtualService is
+  the cause.
