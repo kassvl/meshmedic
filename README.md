@@ -19,24 +19,23 @@ known failure signatures, and what rolled out recently with the exact
 template diff. When the incident recovers, it closes the loop with a
 resolution report and the time the incident was open.
 
-Its scores against LLM-agentic and analyzer-based tools are published, with
-the methodology and the reproducible scenarios, in
+How it compares to `istioctl analyze`, Istio's own configuration analyzer, and
+the reproducible scenarios behind that comparison, are in
 [mesh-incidents-bench](https://github.com/kassvl/mesh-incidents-bench).
 
 ## The gap it fills
 
-[k8sgpt](https://github.com/k8sgpt-ai/k8sgpt) tells you what is wrong at the
-object layer. [Flagger](https://github.com/fluxcd/flagger) protects
-deployments while you ship. LLM-agentic SRE tools reason about open-ended
-incidents. None of them speak the mesh's telemetry: traffic weights, outlier
-ejection, retry policies, mTLS modes, waypoints, and, in ambient mode, the
-L4 denials that never reach request metrics. On the benchmark's mesh
-scenarios, object-state analyzers score zero because the objects stay
-healthy while the telemetry degrades, and the agentic tool matched on the
-scenarios it finished but exhausted its step budget on others. MeshMedic
-owns the moment a running mesh breaks and answers in seconds: a mesh-native
-patch where the fix is mechanical and safe, and an evidence dossier that names
-the root cause where it is not.
+[`istioctl analyze`](https://istio.io/latest/docs/ops/diagnostic-tools/istioctl-analyze/)
+lints your mesh configuration for validity before traffic ever hits it.
+Prometheus and Grafana expose the mesh's metrics but leave the reading to you.
+[Flagger](https://github.com/fluxcd/flagger) protects a rollout while you ship.
+General Kubernetes tools reason about pods, logs, and traces, a layer above the
+mesh. None of them turn live mesh telemetry into a named root cause the moment
+traffic breaks: traffic weights, outlier ejection, retry policies, mTLS modes,
+waypoints, and, in ambient mode, the L4 denials that never reach request
+metrics. MeshMedic owns that moment. It reads the mesh's own signals and answers
+in seconds: a mesh-native patch where the fix is mechanical and safe, and an
+evidence dossier that names the root cause where it is not.
 
 ```
 Prometheus signal --> catalog match --> rendered Istio patch --> pull request --> human merges --> mesh heals
@@ -177,9 +176,12 @@ deterministic playbooks, which enrich alerts with pod logs and change
 tracking. Robusta proved that deterministic enrichment works; MeshMedic
 makes it mesh-native (it reads the mesh's own telemetry, including ambient
 L4) and PR-native (its output is a reviewable GitOps change, not a chat
-message). k8sgpt and LLM-agentic tools are complementary rather than
-competing: the first reads object state, the second reasons about
-open-ended incidents; MeshMedic reads the telemetry layer between them.
+message). The nearest mesh-native tool is Istio's own `istioctl analyze`, and
+it is complementary rather than competing: `istioctl analyze` is a config-time
+linter that catches invalid configuration before traffic, while MeshMedic
+detects what a valid configuration does wrong at runtime. Run istioctl analyze
+in CI; run MeshMedic against live telemetry. The comparison is measured in the
+[benchmark](https://github.com/kassvl/mesh-incidents-bench).
 
 The limits are deliberate and worth stating plainly. Total coverage is
 impossible for any tool: even the strongest LLM agents top out well short of
