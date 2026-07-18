@@ -16,6 +16,10 @@ type Config struct {
 	Interval   string   `yaml:"interval"`
 	Targets    []Target `yaml:"targets"`
 	GitOps     *GitOps  `yaml:"gitops"`
+	// BaselineState is where the learned per-signal baseline is persisted.
+	// Empty disables baseline-relative thresholds; scenarios then use their
+	// static thresholds only.
+	BaselineState string `yaml:"baselineState"`
 }
 
 // GitOps configures where remediation pull requests go. Absent means watch

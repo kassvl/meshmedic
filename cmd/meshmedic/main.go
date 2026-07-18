@@ -20,6 +20,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/kassvl/meshmedic/pkg/baseline"
 	"github.com/kassvl/meshmedic/pkg/catalog"
 	"github.com/kassvl/meshmedic/pkg/detect"
 	"github.com/kassvl/meshmedic/pkg/gitops"
@@ -197,6 +198,14 @@ func runWatch(args []string) {
 	} else {
 		d.Objects = reader
 		d.Triage = reader
+	}
+	if cfg.BaselineState != "" {
+		store := baseline.New(cfg.BaselineState, 0.05)
+		if err := store.Load(); err != nil {
+			logger.Printf("baseline: load %s: %v (starting fresh)", cfg.BaselineState, err)
+		}
+		d.Baseline = store
+		logger.Printf("baseline-relative thresholds enabled, state at %s", cfg.BaselineState)
 	}
 
 	logger.Printf("watching %d scenarios for %d targets against %s every %s",

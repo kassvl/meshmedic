@@ -31,6 +31,17 @@ type Signal struct {
 	Comparison string  `yaml:"comparison"` // one of: > < >= <=
 	Threshold  float64 `yaml:"threshold"`
 	For        string  `yaml:"for"` // how long the condition must hold, e.g. "90s"
+
+	// BaselineMultiplier, when > 0, makes the threshold relative to the
+	// signal's learned baseline for this target: the effective threshold is
+	// baseline * BaselineMultiplier once the baseline is trusted. Until then
+	// the static Threshold applies, so warm-up never fires on noise. This is
+	// how a scenario says "fire when this is 3x its own normal" instead of
+	// picking a fixed number that is wrong for every cluster but one.
+	BaselineMultiplier float64 `yaml:"baselineMultiplier"`
+	// BaselineMinSamples is how many healthy observations must accumulate
+	// before the relative threshold is trusted. Defaults to 20.
+	BaselineMinSamples int `yaml:"baselineMinSamples"`
 }
 
 // Query is a named PromQL query whose result is attached to the pull request

@@ -3,10 +3,12 @@ package detect
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/kassvl/meshmedic/pkg/baseline"
 	"github.com/kassvl/meshmedic/pkg/catalog"
 	"github.com/kassvl/meshmedic/pkg/kube"
 	"github.com/kassvl/meshmedic/pkg/prom"
@@ -424,6 +426,69 @@ func TestTriageEvidenceGathering(t *testing.T) {
 	re := fired[0].RolloutEvidence
 	if len(re) != 1 || re[0].Err != nil || len(re[0].Rollouts) != 1 || re[0].Rollouts[0].Deployment != "loadgen" {
 		t.Fatalf("rollout evidence %+v, want loadgen's rollout", re)
+	}
+}
+
+func TestBaselineRelativeThresholdFiresOnDeviation(t *testing.T) {
+	s := testScenario()
+	s.Signal.For = ""
+	s.Signal.Comparison = ">"
+	s.Signal.Threshold = 1000 // static threshold is deliberately high
+	s.Signal.BaselineMultiplier = 3
+	s.Signal.BaselineMinSamples = 5
+
+	value := 100.0
+	q := querierFunc(func(context.Context, string) (float64, error) { return value, nil })
+	var fired []Incident
+	d := New(
+		[]catalog.Scenario{s},
+		[]Target{{Params: map[string]string{"service": "payments"}}},
+		q,
+		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
+	)
+	d.Baseline = baseline.New(filepath.Join(t.TempDir(), "b.json"), 0.3)
+
+	base := time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC)
+	// Warm up: six healthy ticks at 100. Baseline learns ~100; nothing fires
+	// (100 is under both the static 1000 and the relative 3x100=300).
+	for i := 0; i < 6; i++ {
+		d.Tick(context.Background(), base.Add(time.Duration(i)*time.Second))
+	}
+	if len(fired) != 0 {
+		t.Fatalf("fired %d during warm-up, want 0", len(fired))
+	}
+
+	// A value under the static threshold (1000) but over the relative one
+	// (3 x ~100 = ~300) must fire, proving the baseline drove the decision.
+	value = 350
+	d.Tick(context.Background(), base.Add(10*time.Second))
+	if len(fired) != 1 {
+		t.Fatalf("fired %d after deviation to 350, want 1: relative threshold should catch 3.5x normal", len(fired))
+	}
+}
+
+func TestBaselineRelativeDoesNotFireBeforeWarmup(t *testing.T) {
+	s := testScenario()
+	s.Signal.For = ""
+	s.Signal.Comparison = ">"
+	s.Signal.Threshold = 1000
+	s.Signal.BaselineMultiplier = 3
+	s.Signal.BaselineMinSamples = 5
+
+	// A high value on the very first tick (no baseline yet) must fall back to
+	// the static threshold of 1000, so 350 does not fire during warm-up.
+	q := querierFunc(func(context.Context, string) (float64, error) { return 350, nil })
+	var fired []Incident
+	d := New(
+		[]catalog.Scenario{s},
+		[]Target{{Params: map[string]string{}}},
+		q,
+		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
+	)
+	d.Baseline = baseline.New(filepath.Join(t.TempDir(), "b.json"), 0.3)
+	d.Tick(context.Background(), time.Now())
+	if len(fired) != 0 {
+		t.Fatal("fired before baseline warm-up; must fall back to the static threshold")
 	}
 }
 

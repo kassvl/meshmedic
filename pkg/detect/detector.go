@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"text/template"
 	"time"
@@ -62,16 +63,29 @@ type TriageReader interface {
 	RecentRollouts(ctx context.Context, namespace string, within time.Duration) ([]kube.Rollout, error)
 }
 
+// BaselineStore is the slice of the baseline package the detector needs.
+// baseline.Store satisfies it.
+type BaselineStore interface {
+	Observe(key string, value float64)
+	Baseline(key string, minSamples int) (float64, bool)
+}
+
 // Incident is a scenario firing for a target.
 type Incident struct {
-	Scenario        catalog.Scenario
-	Params          map[string]string
-	Value           float64
-	Since           time.Time
-	Evidence        []EvidenceResult
-	ObjectEvidence  []ObjectEvidenceResult
-	LogEvidence     []LogEvidenceResult
-	RolloutEvidence []RolloutEvidenceResult
+	Scenario catalog.Scenario
+	Params   map[string]string
+	Value    float64
+	// Threshold is the value the signal was actually compared against. For a
+	// baseline-relative scenario this is the learned baseline times the
+	// multiplier, not the static catalog threshold, so the report says what
+	// really fired.
+	Threshold        float64
+	BaselineRelative bool
+	Since            time.Time
+	Evidence         []EvidenceResult
+	ObjectEvidence   []ObjectEvidenceResult
+	LogEvidence      []LogEvidenceResult
+	RolloutEvidence  []RolloutEvidenceResult
 }
 
 // LogEvidenceResult is one log sweep's outcome: per-deployment matched lines.
@@ -142,6 +156,11 @@ type Detector struct {
 	// Triage enables log and rollout evidence when set. Defaults to nil.
 	Triage TriageReader
 
+	// Baseline enables relative thresholds when set: signals with a
+	// baselineMultiplier fire on a deviation from the target's learned
+	// normal. Defaults to nil (static thresholds only).
+	Baseline BaselineStore
+
 	// Log receives non-fatal evaluation problems (template errors, query
 	// failures). Defaults to discarding them; the CLI wires it to stderr.
 	Log func(format string, args ...any)
@@ -164,6 +183,13 @@ func (d *Detector) Run(ctx context.Context, interval time.Duration) {
 	defer ticker.Stop()
 	for {
 		d.Tick(ctx, time.Now())
+		// Persist the learned baseline after each tick so it survives a
+		// restart. Best effort: a save failure logs and the loop continues.
+		if p, ok := d.Baseline.(interface{ Save() error }); ok {
+			if err := p.Save(); err != nil {
+				d.Log("baseline: save: %v", err)
+			}
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -250,8 +276,15 @@ func (d *Detector) evaluateSignal(ctx context.Context, now time.Time, key string
 		return 0, false
 	}
 
-	if !breached(value, s.Signal.Comparison, s.Signal.Threshold) {
+	threshold := d.effectiveThreshold(s, t)
+	if !breached(value, s.Signal.Comparison, threshold) {
 		st.state, st.since = inactive, time.Time{}
+		// Only healthy (non-breaching) values feed the baseline, so an
+		// ongoing incident can never drift the learned normal upward and
+		// silence itself.
+		if d.Baseline != nil && s.Signal.BaselineMultiplier > 0 {
+			d.Baseline.Observe(baselineKey(s.ID, t.Params), value)
+		}
 		return value, false
 	}
 
@@ -271,17 +304,59 @@ func (d *Detector) evaluateSignal(ctx context.Context, now time.Time, key string
 	return value, false
 }
 
+// effectiveThreshold returns the threshold to compare against: the signal's
+// learned baseline times its multiplier once the baseline is trusted,
+// otherwise the static threshold. A scenario with no baselineMultiplier, or
+// one whose baseline has not warmed up, always uses the static threshold.
+func (d *Detector) effectiveThreshold(s catalog.Scenario, t Target) float64 {
+	if d.Baseline == nil || s.Signal.BaselineMultiplier <= 0 {
+		return s.Signal.Threshold
+	}
+	minSamples := s.Signal.BaselineMinSamples
+	if minSamples <= 0 {
+		minSamples = 20
+	}
+	if base, ready := d.Baseline.Baseline(baselineKey(s.ID, t.Params), minSamples); ready {
+		return base * s.Signal.BaselineMultiplier
+	}
+	return s.Signal.Threshold
+}
+
+// baselineKey is a stable per-target-per-scenario key: scenario id plus the
+// target params in sorted order, so a persisted baseline survives a restart
+// and a config reorder.
+func baselineKey(scenarioID string, params map[string]string) string {
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString(scenarioID)
+	for _, k := range keys {
+		b.WriteString("|")
+		b.WriteString(k)
+		b.WriteString("=")
+		b.WriteString(params[k])
+	}
+	return b.String()
+}
+
 func (d *Detector) deliver(ctx context.Context, key string, s catalog.Scenario, t Target, value float64) {
 	st := d.states[key]
+	threshold := d.effectiveThreshold(s, t)
+	relative := d.Baseline != nil && s.Signal.BaselineMultiplier > 0 && threshold != s.Signal.Threshold
 	err := d.handle(ctx, Incident{
-		Scenario:        s,
-		Params:          t.Params,
-		Value:           value,
-		Since:           st.since,
-		Evidence:        d.gatherEvidence(ctx, s, t.Params),
-		ObjectEvidence:  d.gatherObjectEvidence(ctx, s, t.Params),
-		LogEvidence:     d.gatherLogEvidence(ctx, s, t.Params),
-		RolloutEvidence: d.gatherRolloutEvidence(ctx, s, t.Params),
+		Scenario:         s,
+		Params:           t.Params,
+		Value:            value,
+		Threshold:        threshold,
+		BaselineRelative: relative,
+		Since:            st.since,
+		Evidence:         d.gatherEvidence(ctx, s, t.Params),
+		ObjectEvidence:   d.gatherObjectEvidence(ctx, s, t.Params),
+		LogEvidence:      d.gatherLogEvidence(ctx, s, t.Params),
+		RolloutEvidence:  d.gatherRolloutEvidence(ctx, s, t.Params),
 	})
 	if err != nil {
 		d.Log("%s: handler failed, keeping the episode for retry: %v", key, err)

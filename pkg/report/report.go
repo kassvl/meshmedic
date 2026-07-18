@@ -18,10 +18,22 @@ func Markdown(inc detect.Incident, patch string) string {
 	var b strings.Builder
 	s := inc.Scenario
 
+	// The report shows the threshold actually compared against. When it came
+	// from the learned baseline rather than the static catalog value, say so,
+	// so a reviewer knows the alert is relative to this target's own normal.
+	threshold := inc.Threshold
+	if threshold == 0 && !inc.BaselineRelative {
+		threshold = s.Signal.Threshold
+	}
+	thresholdNote := ""
+	if inc.BaselineRelative {
+		thresholdNote = fmt.Sprintf(" (%gx the learned baseline)", s.Signal.BaselineMultiplier)
+	}
+
 	fmt.Fprintf(&b, "## Incident: %s\n\n", s.Title)
 	fmt.Fprintf(&b, "Scenario `%s` (severity %s) fired for %s.\n\n", s.ID, s.Severity, formatParams(inc.Params))
-	fmt.Fprintf(&b, "The signal has held at **%.4g** (threshold %s %g for %s) since %s.\n\n",
-		inc.Value, s.Signal.Comparison, s.Signal.Threshold, s.Signal.For,
+	fmt.Fprintf(&b, "The signal has held at **%.4g** (threshold %s %.4g%s for %s) since %s.\n\n",
+		inc.Value, s.Signal.Comparison, threshold, thresholdNote, s.Signal.For,
 		inc.Since.UTC().Format(time.RFC3339))
 
 	fmt.Fprintf(&b, "### Diagnosis\n\n%s\n", strings.TrimSpace(s.Description))
