@@ -56,7 +56,7 @@ Engine v0.3 - all verified by unit tests (7/7 packages) and live bench runs:
 - Deterministic triage layer: absence signal (`or vector(0)` + `offset`),
   namespace log-signature sweep, ReplicaSet rollout diff; `report-only`
   scenarios produce a dossier instead of a patch.
-- Catalog: 14 entries, every signal validated by injecting the fault on the
+- Catalog: 15 entries, every signal validated by injecting the fault on the
   testbed and observing real telemetry before merge. `no-route-blackhole` (NR,
   404 no-route) is the first source-keyed entry: live validation found that a
   no-route request carries `destination_service_name=unknown`, so it keys on
@@ -69,7 +69,16 @@ Engine v0.3 - all verified by unit tests (7/7 packages) and live bench runs:
   DestinationRule object evidence to disambiguate UH causes. The triage layer
   generalized to three wrong-target client signatures (`client-dns-typo`
   NXDOMAIN, `client-wrong-port` empty-reply, `client-wrong-scheme` TLS error)
-  through one report-only entry. Bench: 11 scenarios.
+  through one report-only entry. The testbed grew a dependency chain (payments
+  now calls a downstream `ledger` service via fake-service `UPSTREAM_URIS`,
+  healthy by default), which unlocks the dependency-layer incident family;
+  `upstream-dependency-errors` is the first: a downstream at ERROR_RATE 0.8
+  surfaced as payments' outbound 5xx, the report named `ledger` as the culprit,
+  and it suppressed `error-surge` so the healthy front service is not ejected
+  for a fault one hop downstream (suppression proven live). Bench: 11 scenarios.
+  Catalog target is roughly 30 validated common classes (the power-law head),
+  not a vanity count; the dependency chain, then testbed variants (sidecar,
+  ingress, rate-limit) unlock the remaining popular families.
 - Taxonomy tiers 1-3 complete: 36 candidates processed, each validated on the
   testbed or deferred with a documented finding (kube-state-metrics gap,
   no downstream/ingress/sidecar/multi-cluster on the testbed, or subsumed by

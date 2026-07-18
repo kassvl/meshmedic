@@ -37,6 +37,11 @@ spec:
               value: ok
             - name: TIMING_50_PERCENTILE
               value: 20ms
+            # payments depends on the ledger service on every request, so the
+            # testbed can model dependency-layer incidents (a service failing
+            # because something it calls is failing).
+            - name: UPSTREAM_URIS
+              value: http://ledger:9090
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -67,6 +72,8 @@ spec:
               value: ok
             - name: TIMING_50_PERCENTILE
               value: 20ms
+            - name: UPSTREAM_URIS
+              value: http://ledger:9090
 ---
 apiVersion: v1
 kind: Service

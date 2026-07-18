@@ -1,0 +1,56 @@
+id: upstream-dependency-errors
+title: Service failing because a dependency is failing
+severity: critical
+description: >
+  The watched service is returning 5xx to its callers, but the cause is not the
+  service itself: its own calls to a downstream dependency are failing, and it
+  is propagating that failure upward. The report names the failing dependency
+  from the service's outbound telemetry, so the operator fixes the dependency
+  rather than the healthy service in front of it. This is the difference between
+  a symptom and a root cause: a caller sees the front service erroring, but
+  ejecting or rolling back that service would do nothing, because the fault is
+  one hop downstream. No patch is proposed on the watched service: the fix
+  belongs to the named dependency, and a mesh-native mitigation (circuit-break
+  the dependency so calls fail fast) is a decision for the operator once the
+  dependency is identified.
+signal:
+  # The watched service as a source: its outbound calls to dependencies that
+  # return 5xx. reporter source|waypoint keeps it mode-agnostic (sidecar source
+  # vs ambient waypoint). Validated live: a downstream ledger at ERROR_RATE 0.8
+  # surfaced here as payments -> ledger 5xx while payments' own endpoints were
+  # healthy.
+  promql: >
+    sum(rate(istio_requests_total{reporter=~"source|waypoint",
+    source_app="{{.service}}", source_workload_namespace="{{.namespace}}",
+    response_code=~"5.."}[2m]))
+  comparison: ">"
+  threshold: 0.5
+  for: 60s
+evidence:
+  # Which dependency is failing, biggest first: the report names the culprit
+  # one hop downstream instead of blaming the watched service.
+  - name: failing-dependencies-by-service
+    promql: >
+      sum by (destination_service_name) (rate(istio_requests_total{reporter=~"source|waypoint",
+      source_app="{{.service}}", source_workload_namespace="{{.namespace}}",
+      response_code=~"5.."}[5m]))
+suppresses:
+  # The watched service propagates the downstream 5xx to its own callers, which
+  # trips error-surge and would evict the service's healthy endpoints. Hold it
+  # back: the endpoints are fine, the dependency is the cause.
+  - error-surge-outlier-ejection
+remediation:
+  target:
+    apiVersion: apps/v1
+    kind: Deployment
+  action: report-only
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 1
+rollback: >
+  Not applicable: nothing is applied. Fix the dependency named in
+  failing-dependencies-by-service; the watched service is healthy and only
+  relaying the failure. If the dependency cannot be fixed immediately, a
+  DestinationRule with outlier detection on that dependency lets calls fail
+  fast instead of hanging, but that is a mitigation the operator chooses once
+  the culprit is known.

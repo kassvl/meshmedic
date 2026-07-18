@@ -1,0 +1,48 @@
+# A downstream dependency for payments: the ledger service. payments-v1/v2 call
+# it on every request (UPSTREAM_URIS), so the testbed can model the most common
+# real mesh incidents, where a service degrades because something it depends on
+# degraded. Healthy and fast by default (10ms, no errors), so it barely shifts
+# the payments baseline; the dependency scenarios turn its knobs.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledger
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ledger
+  template:
+    metadata:
+      labels:
+        app: ledger
+        version: v1
+    spec:
+      containers:
+        - name: ledger
+          image: nicholasjackson/fake-service:v0.26.2
+          ports:
+            - containerPort: 9090
+          env:
+            - name: NAME
+              value: ledger
+            - name: MESSAGE
+              value: ok
+            - name: TIMING_50_PERCENTILE
+              value: 10ms
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ledger
+  namespace: demo
+  labels:
+    app: ledger
+spec:
+  selector:
+    app: ledger
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
