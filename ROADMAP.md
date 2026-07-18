@@ -75,13 +75,16 @@ the mechanism generalizes to any bad client deploy, not just this fixture.
 - [x] Baseline memory (`pkg/baseline`): EWMA per signal, persisted, with
   relative thresholds (`baselineMultiplier`) so a scenario fires on a
   deviation from a target's own normal. Warm-up guardrail; only healthy
-  values feed the baseline
+  values feed the baseline. First relative-threshold entry
+  `latency-regression-vs-baseline`, live-validated (`demo/baseline-relative/`):
+  fired at 3x the learned normal on a regression a static threshold would miss
 - [x] Unmatched-incident recorder (F9): `pkg/recorder` appends a fingerprint
   when a baselined anomaly signal deviates while no catalog scenario is
   active. Records only, human-curated; the guardrail against learning noise
 
-**M2.7 is done**: catalog 12, bench 11, plus the baseline-memory and
-unmatched-incident-recorder foundations, all unit-tested.
+**M2.7 is done**: catalog 13, bench 11, plus the baseline-memory and
+unmatched-incident-recorder foundations, unit-tested and live-validated on
+the testbed (`demo/baseline-relative/`, `demo/f9-recorder/`).
 
 ## M3: live inside the ecosystem
 

@@ -40,7 +40,7 @@ Engine v0.3 - all verified by unit tests (7/7 packages) and live bench runs:
 - Deterministic triage layer: absence signal (`or vector(0)` + `offset`),
   namespace log-signature sweep, ReplicaSet rollout diff; `report-only`
   scenarios produce a dossier instead of a patch.
-- Catalog: 12 entries, every signal validated by injecting the fault on the
+- Catalog: 13 entries, every signal validated by injecting the fault on the
   testbed and observing real telemetry before merge. Taxonomy waves added
   `authz-deny-flood` (403), `route-timeout-too-short` (504/UT), and
   `fault-injection-left-in-production` (FI) - all report-only, the last two
@@ -57,7 +57,14 @@ Engine v0.3 - all verified by unit tests (7/7 packages) and live bench runs:
   and relative thresholds (`baselineMultiplier`), so a scenario can fire on a
   deviation from a target's own learned normal instead of a fixed number.
   Warm-up guardrail (static threshold until enough healthy samples); only
-  non-breaching values feed the baseline. Unit-tested.
+  non-breaching values feed the baseline. Unit-tested and live-validated: the
+  `latency-regression-vs-baseline` entry (the first to use a relative
+  threshold) fired when `payments` p99 hit 488 ms against a 140.8 ms threshold
+  (3x the learned 47 ms normal), a regression a static 1000 ms threshold would
+  miss; labeled evidence named the regressed subset (`v2` 493 ms, `v1` 47 ms).
+  Run captured in `demo/baseline-relative/`. A bench scenario for this class
+  needs the harness to warm up a baseline before injecting, which the current
+  inject-then-measure harness does not do (a documented defer).
 - Unmatched-incident recorder (`pkg/recorder`, F9): baselines a set of generic
   anomaly signals per target and appends a fingerprint when one deviates while
   no catalog scenario is active. Records only, human-curated; the guardrail
