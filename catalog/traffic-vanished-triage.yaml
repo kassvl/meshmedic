@@ -57,6 +57,12 @@ logEvidence:
       - "empty reply from server"
       - "curl: \\(52\\)"
       - "connection reset"
+      # A client speaking https to a plaintext port: the TLS handshake gets
+      # an HTTP response and fails. curl reports 35.
+      - "tls connect error"
+      - "ssl routines"
+      - "curl: \\(35\\)"
+      - "wrong version number"
 rolloutEvidence:
   - name: recent-rollouts
     namespace: "{{.namespace}}"
