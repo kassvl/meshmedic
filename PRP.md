@@ -53,6 +53,12 @@ Engine v0.3 - all verified by unit tests (7/7 packages) and live bench runs:
   testbed or deferred with a documented finding (kube-state-metrics gap,
   no downstream/ingress/sidecar/multi-cluster on the testbed, or subsumed by
   an existing entry). Findings in bench `docs/taxonomy/validation-queue.md`.
+- Baseline memory (`pkg/baseline`): EWMA per signal with atomic persistence
+  and relative thresholds (`baselineMultiplier`), so a scenario can fire on a
+  deviation from a target's own learned normal instead of a fixed number.
+  Warm-up guardrail (static threshold until enough healthy samples); only
+  non-breaching values feed the baseline. Unit-tested; the F9 recorder builds
+  on it next.
 
 Benchmark ([mesh-incidents-bench](https://github.com/kassvl/mesh-incidents-bench)) v0.2 leaderboard (6 scenarios, 36 pts):
 

@@ -64,6 +64,22 @@ scenarios welcome), with 0 cluster objects touched across every run.
 **M2.6 is done**: bench 36/36 with the client-dns-typo triage scenario;
 the mechanism generalizes to any bad client deploy, not just this fixture.
 
+## M2.7: taxonomy expansion and baseline memory
+
+- [x] Taxonomy waves 1-3: 36 candidate failure classes generated and
+  processed, each validated on the testbed or deferred with a documented
+  finding. New catalog entries: `authz-deny-flood`, `route-timeout-too-short`,
+  `fault-injection-left-in-production`; the triage layer generalized to three
+  wrong-target client signatures; `upstream-host-ejection-flood` enriched to
+  disambiguate UH causes. Catalog 9 to 12, bench 6 to 11 scenarios
+- [x] Baseline memory (`pkg/baseline`): EWMA per signal, persisted, with
+  relative thresholds (`baselineMultiplier`) so a scenario fires on a
+  deviation from a target's own normal. Warm-up guardrail; only healthy
+  values feed the baseline
+- [ ] Unmatched-incident recorder (F9): record the fingerprint of a
+  baseline deviation with no matching catalog entry, human-curated, records
+  only
+
 ## M3: live inside the ecosystem
 
 - k8sgpt custom analyzer covering the catalog's detection side
