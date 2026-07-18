@@ -23,8 +23,24 @@ deterministically online.
 
 **Non-goals (fixed):** no ask/Q&A interface, no generic-Kubernetes breadth
 (that lane belongs to Robusta Classic and k8sgpt), no APM/trace
-integrations. An optional LLM layer may *narrate* a finished dossier; it
-never drives detection and MeshMedic must remain complete without it.
+integrations. **This product is pure-deterministic by commitment; that is
+the identity, not a limitation to grow out of.** An LLM-powered MeshMedic is
+a separate future version, never this one: the moment an LLM drives detection
+or writes an applied patch, the differentiators (zero cost, determinism,
+reproducibility, safety) evaporate and it becomes a k8sgpt/Holmes me-too
+(k8sgpt's AI mode scored below its own no-AI mode on this bench, 2/36 vs
+4/36). No optional narration layer here either until the deterministic core
+is done.
+
+**Coverage philosophy (honest):** total scenario coverage is impossible for
+any tool, deterministic or LLM (Holmes tops out at 86% on its own evals), so
+100% is explicitly not the goal. The goal is: cover the common failure
+*classes* (the power-law head, a few dozen class-level signatures, each
+matching many instances); degrade gracefully on the tail (generic triage
+returns a partial dossier, never nothing); and grow coverage through the F9
+learn-record-curate loop. An asymptote toward comprehensive, never complete,
+honest about the edge. Stating what the tool cannot see is a credibility
+feature, not a weakness.
 
 ## 2. Measured state (as of 2026-07-18)
 
@@ -170,10 +186,20 @@ Full plan lives in the session plan file; gates here.
   experiment (dossier-fed single-shot vs agent-driven), recorded to prove the
   edge is architecture, not model. Comparisons that show MeshMedic beats
   Holmes/k8sgpt are in scope; building for their ecosystems is not.
-- **W6 - launch**: gate = docs polished + leaderboard current + demo video;
-  then present MeshMedic (Show HN / r/kubernetes / Istio Slack), CFP draft.
-  Presenting our own system for visibility is fine; the launch sells
-  MeshMedic, it does not contribute to competitors.
+- **W6 - launch (credibility-first)**: the benchmark is the visibility engine,
+  not the tool, but only if it survives scrutiny. Hard gate before any public
+  "we beat X" framing: **independent scenarios** MeshMedic's author did not
+  write (Holmes's own DNS/network fixtures reproduced faithfully, and/or
+  independently-sourced real Istio incidents), and ideally a frontier-model
+  Holmes run so the comparison is not against a handicapped opponent. Launch
+  strategy: (1) fix benchmark credibility first; (2) lead with the story ("I
+  benchmarked the AI SRE tools on mesh incidents"), tool second; (3) a killer
+  60s demo of detect -> dossier/PR -> resolved; (4) the contrarian
+  deterministic-vs-LLM angle, timely in the AI-SRE hype; (5) honesty as a
+  feature (disclose the home game and what the tool cannot do). Realistic
+  ceiling: respected niche noise + a strong career signal, not virality.
+  Selling MeshMedic as a "Holmes killer" backfires; the honest benchmark +
+  contrarian thesis is what earns respect.
 
 Execution style: firsts and PRP updates are done by the main model,
 one at a time, examine-then-produce; subagents (sonnet) only generate W2
