@@ -56,7 +56,7 @@ scenarios welcome), with 0 cluster objects touched across every run.
   for curated failure patterns (resolver/connection/TLS), matching lines
   only, into the report
 - [x] Rollout diff: attach the template diff of any deployment that rolled
-  out recently (via the Progressing condition, not ReplicaSet age) — a bad
+  out recently (via the Progressing condition, not ReplicaSet age) - a bad
   deploy's root cause is a line in that diff
 - [x] `report-only` scenarios: produce an evidence dossier instead of a
   patch when the failing party is not the watched service itself
