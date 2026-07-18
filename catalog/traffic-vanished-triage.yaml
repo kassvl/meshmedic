@@ -52,6 +52,11 @@ logEvidence:
       - "i/o timeout"
       - "certificate"
       - "tls handshake"
+      # A client pointed at a live host but a closed port: ztunnel accepts
+      # the TCP connection and the empty backend closes it. curl reports 52.
+      - "empty reply from server"
+      - "curl: \\(52\\)"
+      - "connection reset"
 rolloutEvidence:
   - name: recent-rollouts
     namespace: "{{.namespace}}"
