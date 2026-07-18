@@ -264,6 +264,15 @@ has unprocessed candidates.
 - **Home game**: bench and tool share an author; v0.2+ changes were
   developed against these exact scenarios. Stated wherever scores appear;
   outside scenario contributions are the standing fix.
+- **No fair head-to-head with Holmes exists** (audited 2026-07-19): Holmes's
+  own 266-fixture corpus has zero Istio/mesh scenarios, all plain Kubernetes.
+  So "MeshMedic beats Holmes" is not well-formed - they are different-domain
+  tools, and the leaderboard measures mesh coverage a general tool does not
+  target, not general quality. The positioning is complementary, never "better
+  than Holmes." The real credibility fix is independent *mesh* scenarios
+  (community-authored), which neither Holmes's corpus nor a home-game bench
+  supplies. Attempting to beat Holmes on its own fixtures is a dead end: there
+  is no fixture MeshMedic can even play.
 - **Ceiling**: deterministic triage covers frequent, signature-bearing
   failure classes (bad deploys, DNS/conn/TLS, config accidents). Novel
   failure modes without signatures, cross-service causal chains, and
