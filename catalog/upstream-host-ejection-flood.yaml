@@ -2,12 +2,15 @@ id: upstream-host-ejection-flood
 title: No healthy upstream hosts left
 severity: critical
 description: >
-  Requests fail with UH (no healthy upstream) or the ejection metrics show
-  outlier detection has removed most of a service's endpoints. Either the
-  workload is genuinely down, or an over-aggressive outlier policy combined
-  with a transient blip ejected everything at once. The safe mesh-side move
-  is to relax the ejection ceiling so a fraction of hosts always stays in
-  rotation, then let the workload recover.
+  Requests fail with UH (no healthy upstream). This flag has more than one
+  cause and they need different fixes, so read the evidence before acting.
+  Either an over-aggressive outlier policy ejected the hosts (the patch below
+  relaxes the ejection ceiling), or a DestinationRule subset selector matches
+  no pods while the pods themselves are healthy (a routing mismatch the
+  ejection patch would not fix; correct the subset labels instead). The
+  destination-rule evidence shows the subsets and the outlier policy so the
+  reviewer can tell which case this is: zero active ejections plus a subset
+  whose labels match nothing points at a selector mismatch, not ejection.
 signal:
   promql: >
     sum(rate(istio_requests_total{reporter=~"source|waypoint", destination_service_name="{{.service}}",
@@ -22,6 +25,20 @@ evidence:
   - name: ready-endpoints
     promql: >
       sum(kube_endpoint_address_available{namespace="{{.namespace}}", endpoint="{{.service}}"})
+objectEvidence:
+  # The DestinationRule's subsets and outlier policy. A subset whose labels
+  # match no pods, next to zero active ejections, is a selector mismatch
+  # rather than an ejection flood, and the ejection patch below does not
+  # apply. Reads through kubectl, so it works where the ejection and
+  # endpoint metrics above need scrape config the stock addon lacks.
+  - name: destination-rule
+    apiVersion: networking.istio.io/v1
+    kind: DestinationRule
+    object: "{{.service}}"
+    namespace: "{{.namespace}}"
+    fields:
+      - spec.subsets
+      - spec.trafficPolicy.outlierDetection
 remediation:
   target:
     apiVersion: networking.istio.io/v1
