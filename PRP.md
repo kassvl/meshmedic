@@ -96,6 +96,16 @@ Engine v0.3 - all verified by unit tests (7/7 packages) and live bench runs:
   testbed or deferred with a documented finding (kube-state-metrics gap,
   no downstream/ingress/sidecar/multi-cluster on the testbed, or subsumed by
   an existing entry). Findings in bench `docs/taxonomy/validation-queue.md`.
+- Mode-agnostic detection (validated): the entries querying
+  `reporter=~"destination|waypoint"` fire in classic sidecar mode as well as
+  ambient. A sidecar-injected `orders` service in `demo-sidecar`
+  (`demo/manifests/sidecar-orders.yaml`) reports with `reporter=destination`;
+  `error-surge` fired on it at a 1.0 ratio over the 120s for-duration
+  (`demo/sidecar-mode/`). This validates the claim rather than asserting it. It
+  adds no catalog entry (the same class in another mode would be padding).
+  Inherently-ambient entries (`waypoint-overload-scale`, `mtls-policy-conflict-ambient`)
+  stay ambient; the `reporter="waypoint"`-only entries need their own sidecar
+  validation before the reporter is widened.
 - Baseline memory (`pkg/baseline`): EWMA per signal with atomic persistence
   and relative thresholds (`baselineMultiplier`), so a scenario can fire on a
   deviation from a target's own learned normal instead of a fixed number.

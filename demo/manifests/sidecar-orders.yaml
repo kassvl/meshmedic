@@ -1,0 +1,142 @@
+# A sidecar-mode counterpart to the ambient payments service: an orders service
+# (v1 stable, v2 canary) in the demo-sidecar namespace with automatic sidecar
+# injection. It exists so the catalog's mode-agnostic entries can be validated
+# in sidecar mode (reporter=destination) as well as ambient (reporter=waypoint),
+# rather than asserting mode-agnosticism without proof.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: demo-sidecar
+  labels:
+    istio-injection: enabled
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-v1
+  namespace: demo-sidecar
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orders
+      version: v1
+  template:
+    metadata:
+      labels:
+        app: orders
+        version: v1
+    spec:
+      containers:
+        - name: orders
+          image: nicholasjackson/fake-service:v0.26.2
+          ports:
+            - containerPort: 9090
+          env:
+            - name: NAME
+              value: orders-v1
+            - name: MESSAGE
+              value: ok
+            - name: TIMING_50_PERCENTILE
+              value: 20ms
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-v2
+  namespace: demo-sidecar
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orders
+      version: v2
+  template:
+    metadata:
+      labels:
+        app: orders
+        version: v2
+    spec:
+      containers:
+        - name: orders
+          image: nicholasjackson/fake-service:v0.26.2
+          ports:
+            - containerPort: 9090
+          env:
+            - name: NAME
+              value: orders-v2
+            - name: MESSAGE
+              value: ok
+            - name: TIMING_50_PERCENTILE
+              value: 20ms
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders
+  namespace: demo-sidecar
+  labels:
+    app: orders
+spec:
+  selector:
+    app: orders
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata:
+  name: orders
+  namespace: demo-sidecar
+spec:
+  host: orders
+  subsets:
+    - name: v1
+      labels:
+        version: v1
+    - name: v2
+      labels:
+        version: v2
+---
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata:
+  name: orders
+  namespace: demo-sidecar
+spec:
+  hosts:
+    - orders
+  http:
+    - route:
+        - destination:
+            host: orders
+            subset: v1
+          weight: 80
+        - destination:
+            host: orders
+            subset: v2
+          weight: 20
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loadgen
+  namespace: demo-sidecar
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loadgen
+  template:
+    metadata:
+      labels:
+        app: loadgen
+    spec:
+      containers:
+        - name: loadgen
+          image: curlimages/curl:8.11.1
+          command: ["sh", "-c"]
+          args:
+            - 'while true; do curl -s -o /dev/null http://orders:9090/; sleep 0.2; done'
