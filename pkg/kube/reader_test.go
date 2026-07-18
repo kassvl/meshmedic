@@ -146,11 +146,11 @@ func triageStub(t *testing.T) *Reader {
 	}
 	dir := t.TempDir()
 	rsJSON := `{"items":[
-	 {"metadata":{"creationTimestamp":"` + time.Now().UTC().Add(-2*time.Minute).Format(time.RFC3339) + `",
+	 {"metadata":{"creationTimestamp":"2026-07-16T00:00:00Z",
 	   "ownerReferences":[{"kind":"Deployment","name":"loadgen"}],
 	   "annotations":{"deployment.kubernetes.io/revision":"2"}},
 	  "spec":{"template":{"spec":{"args":["new-target"]}}}},
-	 {"metadata":{"creationTimestamp":"2026-07-17T00:00:00Z",
+	 {"metadata":{"creationTimestamp":"2026-07-16T00:00:00Z",
 	   "ownerReferences":[{"kind":"Deployment","name":"loadgen"}],
 	   "annotations":{"deployment.kubernetes.io/revision":"1"}},
 	  "spec":{"template":{"spec":{"args":["old-target"]}}}}
@@ -158,10 +158,24 @@ func triageStub(t *testing.T) *Reader {
 	if err := os.WriteFile(dir+"/rs.json", []byte(rsJSON), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// Both ReplicaSets are OLD (created yesterday) to simulate Kubernetes
+	// reusing an existing RS on rollback: only the deployment's Progressing
+	// lastUpdateTime says the rollout is fresh.
+	deployJSON := `{"items":[
+	 {"metadata":{"name":"loadgen"},
+	  "status":{"conditions":[{"type":"Progressing","lastUpdateTime":"` +
+		time.Now().UTC().Add(-2*time.Minute).Format(time.RFC3339) + `"}]}},
+	 {"metadata":{"name":"payments-v1"},
+	  "status":{"conditions":[{"type":"Progressing","lastUpdateTime":"2026-07-01T00:00:00Z"}]}}
+	]}`
+	if err := os.WriteFile(dir+"/deploy.json", []byte(deployJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	stub := `#!/bin/sh
 case "$*" in
-  *replicasets*) cat "` + dir + `/rs.json" ;;
   *jsonpath*) echo "loadgen payments-v1" ;;
+  *replicasets*) cat "` + dir + `/rs.json" ;;
+  *deployments*) cat "` + dir + `/deploy.json" ;;
   *logs*) echo 'curl: (6) Could not resolve host: payments-svc.demo'; echo 'ordinary line' ;;
 esac
 `

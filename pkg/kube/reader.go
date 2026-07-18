@@ -90,11 +90,17 @@ type Rollout struct {
 	Diff       string
 }
 
-// RecentRollouts finds deployments in the namespace whose newest ReplicaSet
-// is younger than within, and diffs its pod template against the previous
-// revision's. A brand-new deployment (no prior revision) reports the whole
-// template as added.
+// RecentRollouts finds deployments in the namespace that rolled out within
+// the window and diffs the current pod template against the previous
+// revision's. Rollout recency comes from the Deployment's Progressing
+// condition, not ReplicaSet age: Kubernetes reuses an existing ReplicaSet
+// when a rollback restores an old template, so creation timestamps lie
+// about when a rollout actually happened.
 func (r *Reader) RecentRollouts(ctx context.Context, namespace string, within time.Duration) ([]Rollout, error) {
+	rolledAt, err := r.progressTimes(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
 	out, err := r.run(ctx, "get", "replicasets.apps", "-n", namespace, "-o", "json")
 	if err != nil {
 		return nil, err
@@ -147,7 +153,11 @@ func (r *Reader) RecentRollouts(ctx context.Context, namespace string, within ti
 		sets := byDeploy[name]
 		sort.Slice(sets, func(i, j int) bool { return sets[i].revision < sets[j].revision })
 		newest := sets[len(sets)-1]
-		age := now.Sub(newest.created)
+		when, ok := rolledAt[name]
+		if !ok {
+			when = newest.created
+		}
+		age := now.Sub(when)
 		if age > within || newest.revision <= 0 {
 			continue
 		}
@@ -162,6 +172,41 @@ func (r *Reader) RecentRollouts(ctx context.Context, namespace string, within ti
 		})
 	}
 	return rollouts, nil
+}
+
+// progressTimes reads each deployment's Progressing condition
+// lastUpdateTime: the closest thing Kubernetes records to "when did the
+// last rollout happen", immune to ReplicaSet reuse.
+func (r *Reader) progressTimes(ctx context.Context, namespace string) (map[string]time.Time, error) {
+	out, err := r.run(ctx, "get", "deployments.apps", "-n", namespace, "-o", "json")
+	if err != nil {
+		return nil, err
+	}
+	var list struct {
+		Items []struct {
+			Metadata struct {
+				Name string `json:"name"`
+			} `json:"metadata"`
+			Status struct {
+				Conditions []struct {
+					Type           string    `json:"type"`
+					LastUpdateTime time.Time `json:"lastUpdateTime"`
+				} `json:"conditions"`
+			} `json:"status"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(out, &list); err != nil {
+		return nil, fmt.Errorf("kubectl get deployments: decoding: %w", err)
+	}
+	times := map[string]time.Time{}
+	for _, d := range list.Items {
+		for _, c := range d.Status.Conditions {
+			if c.Type == "Progressing" {
+				times[d.Metadata.Name] = c.LastUpdateTime
+			}
+		}
+	}
+	return times, nil
 }
 
 // diffTemplates renders two pod templates as indented JSON and shows the

@@ -47,6 +47,23 @@ investigators structurally cannot follow:
 **M2.5 is done**: 30/30 on bench v0.2 (a disclosed home game; outside
 scenarios welcome), with 0 cluster objects touched across every run.
 
+## M2.6: deterministic triage for out-of-catalog incidents
+
+- [x] Absence signal: `traffic-vanished-triage` fires when traffic that was
+  flowing has stopped (`or vector(0)` + a `max_over_time` baseline), the
+  failure class no threshold-on-presence detector can see
+- [x] Log-signature sweep: read every namespace deployment's recent logs
+  for curated failure patterns (resolver/connection/TLS), matching lines
+  only, into the report
+- [x] Rollout diff: attach the template diff of any deployment that rolled
+  out recently (via the Progressing condition, not ReplicaSet age) — a bad
+  deploy's root cause is a line in that diff
+- [x] `report-only` scenarios: produce an evidence dossier instead of a
+  patch when the failing party is not the watched service itself
+
+**M2.6 is done**: bench 36/36 with the client-dns-typo triage scenario;
+the mechanism generalizes to any bad client deploy, not just this fixture.
+
 ## M3: live inside the ecosystem
 
 - k8sgpt custom analyzer covering the catalog's detection side

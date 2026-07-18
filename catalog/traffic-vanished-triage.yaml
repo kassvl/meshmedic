@@ -13,16 +13,19 @@ description: >
   recently with the exact template diff. The root cause of a bad deploy is
   usually a line in that diff.
 signal:
-  # Both sides use `or vector(0)` because a fully stopped flow does not
-  # return zero, it returns no series at all - which is exactly the case
-  # this scenario exists to catch. The bool product is 1 only when traffic
-  # was flowing 10 minutes ago and is gone now.
+  # `or vector(0)` matters because a fully stopped flow does not return
+  # zero, it returns no series at all - exactly the case this scenario
+  # exists to catch. The baseline is the *peak* of the last 30 minutes
+  # (max_over_time subquery), not a fixed offset: a fixed offset can land
+  # inside an earlier outage and blind the comparison. The bool product is
+  # 1 only when traffic flowed at some point in the last 30m and is gone
+  # now.
   promql: >
     ((sum(rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
     destination_service_namespace="{{.namespace}}"}[2m])) or vector(0)) < bool 0.05)
     *
-    ((sum(rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
-    destination_service_namespace="{{.namespace}}"}[2m] offset 10m)) or vector(0)) > bool 0.5)
+    (max_over_time((sum(rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
+    destination_service_namespace="{{.namespace}}"}[2m])) or vector(0))[30m:1m]) > bool 0.5)
   comparison: ">"
   threshold: 0.5
   for: 60s
