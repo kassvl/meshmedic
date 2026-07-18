@@ -48,7 +48,20 @@ func TestRenderMissingParamFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Render(scenarios[0], map[string]string{}); err == nil {
-		t.Fatal("want error when params are missing, got nil")
+	// Pick a scenario that actually renders a patch: report-only entries
+	// return a fixed placeholder and never touch params, so they cannot
+	// surface a missing-param error.
+	var patchScenario *catalog.Scenario
+	for i := range scenarios {
+		if scenarios[i].Remediation.Action != "report-only" {
+			patchScenario = &scenarios[i]
+			break
+		}
+	}
+	if patchScenario == nil {
+		t.Fatal("no patch-rendering scenario in the catalog to test against")
+	}
+	if _, err := Render(*patchScenario, map[string]string{}); err == nil {
+		t.Fatalf("want error when params are missing for %s, got nil", patchScenario.ID)
 	}
 }
