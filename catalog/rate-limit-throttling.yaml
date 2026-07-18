@@ -1,0 +1,59 @@
+id: rate-limit-throttling
+title: Traffic throttled by a rate limit (429/RL)
+severity: warning
+description: >
+  Requests to the service are being rejected with HTTP 429 and the RL
+  (rate limited) response flag: a rate limit is throttling live traffic. The RL
+  flag is unambiguous, only a rate limit produces it, so this is never a guess
+  about a generic 429 an application might return. Either the limit is set too
+  low for the legitimate load, or the traffic is genuinely excessive and the
+  limit is doing its job. The report shows how much traffic is being rejected
+  and lists the EnvoyFilters in the namespace, where a local rate limit is
+  configured, so the operator can find the token bucket. No patch is proposed:
+  raising the limit and shedding the load are opposite fixes, and only the
+  operator knows whether the traffic is legitimate.
+signal:
+  # RL is only stamped by a rate limit, so the flag alone is the signal.
+  # reporter source|waypoint: in ambient the limit is enforced at the waypoint
+  # and reported by the caller side; validated live via a local-ratelimit
+  # EnvoyFilter on the payments waypoint returning 429/RL.
+  promql: >
+    sum(rate(istio_requests_total{reporter=~"source|waypoint",
+    destination_service_name="{{.service}}", destination_service_namespace="{{.namespace}}",
+    response_flags="RL"}[2m]))
+  comparison: ">"
+  threshold: 0.5
+  for: 60s
+evidence:
+  # Who is being throttled, biggest first, so the report names the caller
+  # hitting the limit rather than only the aggregate.
+  - name: throttled-by-source
+    promql: >
+      sum by (source_workload) (rate(istio_requests_total{reporter=~"source|waypoint",
+      destination_service_name="{{.service}}", destination_service_namespace="{{.namespace}}",
+      response_flags="RL"}[5m]))
+objectEvidence:
+  # Every EnvoyFilter in the namespace, where a local rate limit lives, so the
+  # token bucket that is doing the throttling is visible.
+  - name: envoyfilters-in-namespace
+    apiVersion: networking.istio.io/v1alpha3
+    kind: EnvoyFilter
+    object: "*"
+    namespace: "{{.namespace}}"
+    fields:
+      - items[*].metadata.name
+      - items[*].spec.configPatches[*].applyTo
+remediation:
+  target:
+    apiVersion: networking.istio.io/v1alpha3
+    kind: EnvoyFilter
+  action: report-only
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 1
+rollback: >
+  Not applicable: nothing is applied. Find the EnvoyFilter in the evidence that
+  configures the local rate limit and check its token bucket against the
+  legitimate request rate. If the limit is too low, raise it; if the traffic is
+  a genuine flood, the limit is working and the fix is upstream (caching, a
+  backend scale-up, or a client fix), not a higher limit.

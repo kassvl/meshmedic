@@ -1,0 +1,41 @@
+# FAULT injection, not part of the healthy testbed: 02-app.sh does not apply
+# this. Apply it to reproduce the rate-limit-throttling scenario (a local rate
+# limit on the payments waypoint with a tiny token bucket, so live traffic is
+# rejected with 429/RL), and delete it to reset:
+#   kubectl apply -f demo/manifests/rate-limit-fault.yaml
+#   kubectl -n demo delete envoyfilter payments-local-ratelimit
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: payments-local-ratelimit
+  namespace: demo
+spec:
+  targetRefs:
+    - kind: Gateway
+      group: gateway.networking.k8s.io
+      name: waypoint
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.local_ratelimit
+          typed_config:
+            "@type": type.googleapis.com/udpa.type.v1.TypedStruct
+            type_url: type.googleapis.com/envoy.extensions.filters.http.local_ratelimit.v3.LocalRateLimit
+            value:
+              stat_prefix: http_local_rate_limiter
+              token_bucket:
+                max_tokens: 1
+                tokens_per_fill: 1
+                fill_interval: 1s
+              filter_enabled:
+                default_value: { numerator: 100, denominator: HUNDRED }
+              filter_enforced:
+                default_value: { numerator: 100, denominator: HUNDRED }
