@@ -1,0 +1,56 @@
+id: authz-deny-flood
+title: Legitimate callers denied by an authorization policy
+severity: critical
+description: >
+  A workload's calls to a service are being rejected with HTTP 403 by an
+  Istio AuthorizationPolicy, while the caller has a valid mesh identity
+  (this is an authorization decision, not an mTLS handshake failure). The
+  usual causes are a DENY rule that is broader than intended or a
+  default-deny namespace missing an ALLOW rule for this caller. No patch is
+  proposed automatically: whether the denial is a mistake or is working as
+  intended is a judgment only an operator can make, and auto-loosening an
+  authorization policy could open a real security hole. Instead this entry
+  assembles a dossier: which caller is being denied, whether it has a valid
+  mesh identity, and every AuthorizationPolicy in the namespace with its
+  action and rules, so the reviewer can see at a glance which policy is
+  denying and decide.
+signal:
+  promql: >
+    sum(rate(istio_requests_total{reporter="waypoint", destination_service_name="{{.service}}",
+    destination_service_namespace="{{.namespace}}", response_code="403"}[2m]))
+  comparison: ">"
+  threshold: 0.5
+  for: 60s
+evidence:
+  # Names exactly who is being denied. A valid source_principal here
+  # confirms this is an authorization denial, not an identity failure.
+  - name: denied-403-by-source
+    promql: >
+      sum by (source_workload, source_workload_namespace, source_principal)
+      (rate(istio_requests_total{reporter="waypoint", destination_service_name="{{.service}}",
+      destination_service_namespace="{{.namespace}}", response_code="403"}[5m]))
+objectEvidence:
+  # Every AuthorizationPolicy in the namespace, so the reviewer can see the
+  # action and rules of the policy that is doing the denying.
+  - name: authorization-policies
+    apiVersion: security.istio.io/v1
+    kind: AuthorizationPolicy
+    object: "*"
+    namespace: "{{.namespace}}"
+    fields:
+      - items[*].metadata.name
+      - items[*].spec.action
+      - items[*].spec.rules
+remediation:
+  target:
+    apiVersion: security.istio.io/v1
+    kind: AuthorizationPolicy
+  action: report-only
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 1
+rollback: >
+  Not applicable: nothing is applied. If the denial is a mistake, the fix is
+  usually a scoped ALLOW for the named caller or a correction to the too-broad
+  DENY rule; the authorization-policies evidence names the policy to change.
+  If the denial is intended, the caller is the thing to fix, not the mesh.
