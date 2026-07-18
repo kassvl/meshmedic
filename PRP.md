@@ -61,7 +61,12 @@ Engine v0.3 - all verified by unit tests (7/7 packages) and live bench runs:
 - Unmatched-incident recorder (`pkg/recorder`, F9): baselines a set of generic
   anomaly signals per target and appends a fingerprint when one deviates while
   no catalog scenario is active. Records only, human-curated; the guardrail
-  against learning noise into confident wrongness. Unit-tested.
+  against learning noise into confident wrongness. Unit-tested and live-
+  validated on the testbed: a 250 ms latency regression drove `payments` p99 to
+  478 ms (learned normal 48 ms), too small to trip the 1000 ms `canary-latency`
+  threshold, so the catalog stayed silent while the recorder logged 13
+  fingerprints and the baseline held frozen at 48 ms (the anomaly never became
+  the new normal). Run captured in `demo/f9-recorder/`.
 
 Benchmark ([mesh-incidents-bench](https://github.com/kassvl/mesh-incidents-bench)) v0.2 leaderboard (6 scenarios, 36 pts):
 
@@ -112,7 +117,7 @@ if counter-examples surface.
 | F6 | First MTTD comparison across mesh troubleshooting tools | Planned (W2) | harness timestamps exist | - |
 | F7 | First mesh/Istio analyzer for k8sgpt (inside a CNCF project) | Planned (W4) | - | verify none merged upstream before PR |
 | F8 | First controlled same-model comparison: dossier-fed single-shot vs agent-driven investigation | Planned (W5) | free via mistral tier | doubles as thesis material |
-| F9 | First mesh tool that learns signatures from the incidents it sees in production, deterministically and human-curated | **Staked** | meshmedic `ad446af` (pkg/recorder + detector anomaly watch), unit-tested | records only; no learned signature can remediate without human review + testbed validation |
+| F9 | First mesh tool that learns signatures from the incidents it sees in production, deterministically and human-curated | **Staked** | meshmedic `ad446af` (pkg/recorder + detector anomaly watch); unit-tested + live run in `demo/f9-recorder/` (baseline held frozen while 13 fingerprints logged, catalog silent) | records only; no learned signature can remediate without human review + testbed validation |
 
 ## 5. Execution plan (6 weeks, career-first, 10-15 h/wk, $0 budget)
 
