@@ -86,6 +86,17 @@ the mechanism generalizes to any bad client deploy, not just this fixture.
 unmatched-incident-recorder foundations, unit-tested and live-validated on
 the testbed (`demo/baseline-relative/`, `demo/f9-recorder/`).
 
+## M2.8: close the loop
+
+- [x] Resolution reports: when a firing incident's signal falls back under its
+  threshold, MeshMedic prints a resolution with the interval the condition held
+  (MTTR), so the incident opens and closes in the same terminal. Only the
+  firing-to-clear edge resolves; a never-fired breach or a no-data clear
+  produces no false recovery
+
+**M2.8 is done**: an incident opened and closed on the testbed with
+`resolved after 3m15s` (`demo/closed-loop/`), unit-tested on all three edges.
+
 ## M3: prove and present the system
 
 - Architecture-proof experiment: the same model fed a MeshMedic dossier in one

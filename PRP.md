@@ -65,6 +65,13 @@ Engine v0.3 - all verified by unit tests (7/7 packages) and live bench runs:
   Run captured in `demo/baseline-relative/`. A bench scenario for this class
   needs the harness to warm up a baseline before injecting, which the current
   inject-then-measure harness does not do (a documented defer).
+- Closed-loop resolution: when a firing incident's signal falls back under its
+  threshold, the detector emits a resolution report with the interval the
+  condition held (MTTR), completing the lifecycle detect -> dossier/PR ->
+  resolved. Only the firing-to-clear edge resolves; a breach that never fired,
+  or one whose traffic vanishes, produces no false recovery. Unit-tested and
+  live-validated: an incident opened at 05:28:07Z and closed at 05:31:22Z with
+  `resolved after 3m15s` (`demo/closed-loop/`).
 - Unmatched-incident recorder (`pkg/recorder`, F9): baselines a set of generic
   anomaly signals per target and appends a fingerprint when one deviates while
   no catalog scenario is active. Records only, human-curated; the guardrail
