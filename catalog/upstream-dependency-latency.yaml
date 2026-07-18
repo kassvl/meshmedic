@@ -1,0 +1,51 @@
+id: upstream-dependency-latency
+title: Service slow because a dependency is slow
+severity: warning
+description: >
+  The watched service is slow, but the latency is not its own: its calls to a
+  downstream dependency are taking too long, and it is waiting on them. The
+  report names the slow dependency from the service's outbound telemetry, so
+  the operator looks one hop downstream instead of profiling a service that is
+  only blocked. This is the latency counterpart to a dependency's errors: a
+  caller sees the front service as slow, but the time is spent waiting on
+  something it calls. No patch is proposed on the watched service: the fix
+  belongs to the named dependency, or to a timeout or circuit breaker on the
+  call to it, which is a decision for the operator once the dependency is
+  identified.
+signal:
+  # The watched service as a source: the p99 of its outbound calls to
+  # dependencies. reporter source|waypoint keeps it mode-agnostic. Validated
+  # live: a downstream ledger at 300ms drove this from ~25ms to 493ms while
+  # payments' own processing was unchanged.
+  promql: >
+    histogram_quantile(0.99, sum by (le) (rate(istio_request_duration_milliseconds_bucket{reporter=~"source|waypoint",
+    source_app="{{.service}}", source_workload_namespace="{{.namespace}}"}[2m])))
+  comparison: ">"
+  threshold: 200
+  for: 90s
+evidence:
+  # Which dependency is slow, biggest first: the report names the culprit one
+  # hop downstream rather than the blocked service in front of it.
+  - name: dependency-latency-p99-ms
+    promql: >
+      histogram_quantile(0.99, sum by (le, destination_service_name) (rate(istio_request_duration_milliseconds_bucket{reporter=~"source|waypoint",
+      source_app="{{.service}}", source_workload_namespace="{{.namespace}}"}[5m])))
+suppresses:
+  # The service waiting on a slow dependency looks slow to its own callers,
+  # which trips the baseline-relative latency entry. Hold it back: the service
+  # is not the cause, the dependency is.
+  - latency-regression-vs-baseline
+remediation:
+  target:
+    apiVersion: apps/v1
+    kind: Deployment
+  action: report-only
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 1
+rollback: >
+  Not applicable: nothing is applied. Look at the dependency named in
+  dependency-latency-p99-ms; the watched service is only blocked waiting on it.
+  If the dependency cannot be sped up, a route timeout or a DestinationRule
+  circuit breaker on the call to it bounds the wait, but that is a mitigation
+  the operator chooses once the slow dependency is known.

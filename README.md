@@ -56,7 +56,7 @@ Prometheus signal --> catalog match --> rendered Istio patch --> pull request --
 
 ## Catalog
 
-Fifteen entries today, each with the PromQL that detects it, evidence
+Sixteen entries today, each with the PromQL that detects it, evidence
 queries for the report, guardrails, and a rollback note. Entries that carry a
 mesh-native patch propose it; entries where the right fix depends on intent
 are `report-only` and deliver an evidence dossier instead of a guess.
@@ -67,6 +67,7 @@ are `report-only` and deliver an evidence dossier instead of a guess.
 | `latency-regression-vs-baseline` | p99 above the service's own learned normal | report-only, relative threshold |
 | `error-surge-outlier-ejection` | sustained 5xx from bad endpoints | DestinationRule outlier detection |
 | `upstream-dependency-errors` | service failing because a dependency it calls is failing | report-only, names the culprit dependency |
+| `upstream-dependency-latency` | service slow because a dependency it calls is slow | report-only, names the slow dependency |
 | `retry-storm-damping` | retries amplifying an outage | cut retry attempts, hard route timeout |
 | `connection-pool-overflow` | UO flags, circuit breaker shedding load | raise pool limits, with resource evidence |
 | `route-timeout-too-short` | 504/UT, timeout shorter than backend latency | report-only |
@@ -140,7 +141,7 @@ $ go run ./cmd/meshmedic validate
 ID                            SEVERITY  TARGET              TITLE
 canary-latency-rollback       critical  VirtualService      Canary subset latency regression
 ...
-catalog OK: 15 scenarios
+catalog OK: 16 scenarios
 ```
 
 Point the detector at a Prometheus and it evaluates every catalog signal for
@@ -151,7 +152,7 @@ rendered patch, and the rollback note.
 
 ```console
 $ go run ./cmd/meshmedic watch --config examples/watch.yaml
-meshmedic: watching 15 scenarios for 1 targets against http://localhost:9090 every 30s
+meshmedic: watching 16 scenarios for 1 targets against http://localhost:9090 every 30s
 ```
 
 Add a `gitops` section to the config and set `MESHMEDIC_GITHUB_TOKEN` (or

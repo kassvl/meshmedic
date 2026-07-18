@@ -56,7 +56,7 @@ Engine v0.3 - all verified by unit tests (7/7 packages) and live bench runs:
 - Deterministic triage layer: absence signal (`or vector(0)` + `offset`),
   namespace log-signature sweep, ReplicaSet rollout diff; `report-only`
   scenarios produce a dossier instead of a patch.
-- Catalog: 15 entries, every signal validated by injecting the fault on the
+- Catalog: 16 entries, every signal validated by injecting the fault on the
   testbed and observing real telemetry before merge. `no-route-blackhole` (NR,
   404 no-route) is the first source-keyed entry: live validation found that a
   no-route request carries `destination_service_name=unknown`, so it keys on
@@ -72,10 +72,15 @@ Engine v0.3 - all verified by unit tests (7/7 packages) and live bench runs:
   through one report-only entry. The testbed grew a dependency chain (payments
   now calls a downstream `ledger` service via fake-service `UPSTREAM_URIS`,
   healthy by default), which unlocks the dependency-layer incident family;
-  `upstream-dependency-errors` is the first: a downstream at ERROR_RATE 0.8
-  surfaced as payments' outbound 5xx, the report named `ledger` as the culprit,
-  and it suppressed `error-surge` so the healthy front service is not ejected
-  for a fault one hop downstream (suppression proven live). Bench: 11 scenarios.
+  `upstream-dependency-errors` and `upstream-dependency-latency` are the first
+  two, both source-keyed on the watched service's outbound telemetry. Errors: a
+  downstream at ERROR_RATE 0.8 surfaced as payments' outbound 5xx, the report
+  named `ledger`, and it suppressed `error-surge` so the healthy front service
+  is not ejected for a fault one hop downstream. Latency: a downstream at 300 ms
+  drove payments' outbound p99 to 497 ms, the report named `ledger`, and it
+  suppressed `latency-regression-vs-baseline` so the blocked service is not
+  blamed for its dependency's slowness. Both suppressions proven live. Bench: 11
+  scenarios.
   Catalog target is roughly 30 validated common classes (the power-law head),
   not a vanity count; the dependency chain, then testbed variants (sidecar,
   ingress, rate-limit) unlock the remaining popular families.
