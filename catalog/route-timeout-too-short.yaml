@@ -31,6 +31,11 @@ evidence:
     promql: >
       histogram_quantile(0.99, sum by (le) (rate(istio_request_duration_milliseconds_bucket{reporter=~"destination|waypoint",
       destination_service_name="{{.service}}", destination_service_namespace="{{.namespace}}"}[5m])))
+suppresses:
+  # 504 timeouts are 5xx, so they trip the error-surge signal too. But the
+  # endpoints are healthy and outlier ejection would evict them for no
+  # reason; the route timeout is the real cause, so hold error-surge back.
+  - error-surge-outlier-ejection
 objectEvidence:
   # The VirtualService and its route timeout: the exact field to raise.
   - name: virtualservice-timeouts
