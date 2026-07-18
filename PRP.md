@@ -1,4 +1,4 @@
-# MeshMedic — Product Requirement Prompt (PRP)
+# MeshMedic - Product Requirement Prompt (PRP)
 
 Single source of truth for what MeshMedic is, what has been measured, what
 is claimed, and what happens next. Updated at the close of every plan week;
@@ -28,14 +28,14 @@ never drives detection and MeshMedic must remain complete without it.
 
 ## 2. Measured state (as of 2026-07-18)
 
-Engine v0.3 — all verified by unit tests (7/7 packages) and live bench runs:
+Engine v0.3 - all verified by unit tests (7/7 packages) and live bench runs:
 - Labeled evidence (`prom.QuerySeries`): breakdowns keep workload names.
 - Configuration evidence (`pkg/kube`, kubectl-only, read-only): object
   fields, list mode for policies.
 - Cascade suppression (`suppresses:`): one incident, not two, in overflow
   storms.
 - Ambient L4 detection: `istio_tcp_connections_closed_total`
-  `response_flags="DENY"` from ztunnel — strict-mTLS conflicts that never
+  `response_flags="DENY"` from ztunnel - strict-mTLS conflicts that never
   reach L7 metrics.
 - Deterministic triage layer: absence signal (`or vector(0)` + `offset`),
   namespace log-signature sweep, ReplicaSet rollout diff; `report-only`
@@ -64,7 +64,7 @@ created/deleted during investigation (MeshMedic: always 0).
 - **k8sgpt** (CNCF Sandbox, deterministic analyzers): object-state only;
   structurally blind to telemetry-layer incidents (measured 0/24). AI mode
   scored *below* its own no-AI mode on false-positive discipline.
-- **Robusta Classic**: the closest prior art — deterministic playbooks,
+- **Robusta Classic**: the closest prior art - deterministic playbooks,
   log enrichment, change tracking, generic K8s, Slack-bound output. Our
   honest one-liner: *Robusta Classic proved deterministic enrichment
   works; MeshMedic makes it mesh-native and PR-native.*
@@ -79,7 +79,7 @@ query), storm behavior, and closed-loop potential.
 ## 4. Firsts registry
 
 Every claim below was preceded by a prior-art search (dated); absence of
-evidence is not proof — claims are staked by public commits and revised
+evidence is not proof - claims are staked by public commits and revised
 if counter-examples surface.
 
 | # | claim | status | evidence | caveats |
@@ -88,9 +88,9 @@ if counter-examples surface.
 | F2 | First reproducible mesh-incident diagnosis benchmark with a tool leaderboard | **Staked** | bench `aa818f1`; README leaderboard | Chaos tools inject but do not score diagnosis; academic LLM evals are not tool leaderboards |
 | F3 | First published "investigation footprint" measurement (cluster mutations by diagnostic tools) | **Staked** | bench `docs/investigation-footprint.md`; harness footer (commit `dd68e82`); Holmes v0.1 canary created 5 pods, cited from tool-call log | v0.2 runs measured 0 for all tools; the metric+method is the first, MeshMedic's zero is structural, agents' is per-run |
 | F4 | First practical reference for ztunnel L4 denial telemetry | **Staked** | bench `docs/ambient-l4-denial-telemetry.md`; labels verified live on Istio 1.24.1 | Doc pins version; signal shape is inherent to ambient mTLS |
-| F5 | First comprehensive ambient-mesh failure-mode encyclopedia | Planned (W2) | taxonomy pipeline | — |
-| F6 | First MTTD comparison across mesh troubleshooting tools | Planned (W2) | harness timestamps exist | — |
-| F7 | First mesh/Istio analyzer for k8sgpt (inside a CNCF project) | Planned (W4) | — | verify none merged upstream before PR |
+| F5 | First comprehensive ambient-mesh failure-mode encyclopedia | Planned (W2) | taxonomy pipeline | - |
+| F6 | First MTTD comparison across mesh troubleshooting tools | Planned (W2) | harness timestamps exist | - |
+| F7 | First mesh/Istio analyzer for k8sgpt (inside a CNCF project) | Planned (W4) | - | verify none merged upstream before PR |
 | F8 | First controlled same-model comparison: dossier-fed single-shot vs agent-driven investigation | Planned (W5) | free via mistral tier | doubles as thesis material |
 | F9 | First mesh tool that learns signatures from the incidents it sees in production, deterministically and human-curated | Planned (W3) | unmatched-incident recorder, adjacent to baseline memory | records only; no learned signature can remediate without human review + testbed validation |
 
@@ -98,18 +98,18 @@ if counter-examples surface.
 
 Full plan lives in the session plan file; gates here.
 
-- **W0 — seal the base** (DONE): commits pushed (`f1fb440`, `aa818f1`);
+- **W0 - seal the base** (DONE): commits pushed (`f1fb440`, `aa818f1`);
   triage verified on client-dns-typo (dossier shows resolver log line +
   rollout diff `- payments:9090` → `+ payments-svc.demo:9090`); two live
   bugs found and regression-tested (ReplicaSet reuse, fixed-offset
   baseline); error-surge regression clean (no false triage fire);
   leaderboard 36/36 and docs updated; holmesgpt scratch clone deleted.
-- **W1 — storefront**: README rewrite + demo with dossier scene; bench
+- **W1 - storefront**: README rewrite + demo with dossier scene; bench
   CONTRIBUTING + scenario template; F4 and F3 docs written.
-- **W2 — taxonomy wave 1**: 4 sonnet subagents generate grounded
+- **W2 - taxonomy wave 1**: 4 sonnet subagents generate grounded
   candidates (Istio issues + Holmes corpus); Fable validates 4-6 classes
   on the testbed; catalog 9→13+, bench 6→8; F5 encyclopedia + F6 MTTD.
-- **W3 — baseline memory + unmatched-incident recorder**: `pkg/baseline`
+- **W3 - baseline memory + unmatched-incident recorder**: `pkg/baseline`
   EWMA store + relative thresholds (the "knows your cluster's normal" moat),
   plus a recorder that logs the telemetry fingerprint of any deviation with
   no matching catalog entry. The recorder is the production-fed, automatic
@@ -120,11 +120,11 @@ Full plan lives in the session plan file; gates here.
   and the wrong-port empty-reply signature live this session. Learn, record,
   human/testbed validates, catalog grows. This is the antivirus/SIEM model,
   not LLM self-training, so it does not compromise determinism.
-- **W4 — ecosystem**: k8sgpt analyzer PR (F7, intent-issue first) +
+- **W4 - ecosystem**: k8sgpt analyzer PR (F7, intent-issue first) +
   Istio community meeting demo request.
-- **W5 — closed loop + storm + architecture proof**: resolution reports;
+- **W5 - closed loop + storm + architecture proof**: resolution reports;
   storm scenario; F8 experiment recorded.
-- **W6 — launch**: gate = ecosystem PR live + docs polished + leaderboard
+- **W6 - launch**: gate = ecosystem PR live + docs polished + leaderboard
   current + demo video; then Show HN / r/kubernetes / Istio Slack, CFP
   draft. CNCF Sandbox talk only after real adopters (M4).
 
@@ -141,18 +141,26 @@ validation. Weekly scope = one demoable deliverable.
 - **Ceiling**: deterministic triage covers frequent, signature-bearing
   failure classes (bad deploys, DNS/conn/TLS, config accidents). Novel
   failure modes without signatures, cross-service causal chains, and
-  problems that never log are out of reach — by design, disclosed.
+  problems that never log are out of reach - by design, disclosed.
 - **Signatures rot**: pattern lists need curation; they live in the
   reviewable catalog for that reason.
 - **Clock risk**: cheap/local frontier-class models will shrink the
   cost/privacy gap of LLM agents within 1-2 years. The durable moat is
   what we accumulate now: baseline memory, evidence quality, closed loop,
-  taxonomy coverage, and the bench community — not LLM-lessness alone.
+  taxonomy coverage, and the bench community - not LLM-lessness alone.
+- **Learning without self-deception**: a tool that "learns from every error"
+  is only as good as its guardrail against learning noise. Undisciplined
+  self-training is how k8sgpt's AI mode scored below its no-AI mode on
+  noise-only, wrapping harmless findings in confident fixes. The recorder
+  (F9) records fingerprints but never auto-promotes them to remediation;
+  promotion is a human decision backed by testbed validation. Alertness to
+  new failures comes from the deterministic baseline deviation, not from a
+  model retraining on unverified input.
 
 ## 7. Thesis synergy
 
 `~/istio-ambient-aiops-thesis` shares this project's subject. Designated
 shared outputs: the bench methodology, the Holmes weakness analysis, and
-the W5 same-model/two-architectures experiment (F8) — each written so a
+the W5 same-model/two-architectures experiment (F8) - each written so a
 cleaned copy can serve as thesis chapters. Keep the academic register in
 those three docs slightly more formal for reuse.
