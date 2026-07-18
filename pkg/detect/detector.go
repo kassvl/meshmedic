@@ -135,6 +135,27 @@ type ObjectEvidenceResult struct {
 // once the incident is durably handed off.
 type HandlerFunc func(ctx context.Context, inc Incident) error
 
+// Resolution is a firing incident returning to health: its signal fell back
+// under the threshold. It closes the loop an Incident opened, carrying the
+// interval the condition held so an operator reads MTTR without diffing two
+// reports.
+type Resolution struct {
+	Scenario   catalog.Scenario
+	Params     map[string]string
+	Value      float64   // the recovered value, now under the threshold
+	Threshold  float64   // the threshold the signal fell back under
+	Since      time.Time // when the breach began
+	ResolvedAt time.Time // when the signal returned under the threshold
+}
+
+// Duration is how long the signal was in breach before it recovered.
+func (r Resolution) Duration() time.Duration { return r.ResolvedAt.Sub(r.Since) }
+
+// ResolveFunc receives each resolution. Unlike HandlerFunc it is fire and
+// forget: a resolution report is informational, so an error is logged and the
+// state clears regardless. Nil disables resolution reporting entirely.
+type ResolveFunc func(ctx context.Context, res Resolution) error
+
 type state int
 
 const (
@@ -177,6 +198,11 @@ type Detector struct {
 	AnomalyWatch      []catalog.Query
 	AnomalyFactor     float64
 	AnomalyMinSamples int
+
+	// OnResolve, when set, is called once each time a firing incident recovers
+	// (its signal falls back under the threshold). Nil disables resolution
+	// reports; detection is identical either way.
+	OnResolve ResolveFunc
 
 	// Log receives non-fatal evaluation problems (template errors, query
 	// failures). Defaults to discarding them; the CLI wires it to stderr.
@@ -293,7 +319,9 @@ func (d *Detector) evaluateSignal(ctx context.Context, now time.Time, key string
 	value, err := d.querier.Query(ctx, query)
 	switch {
 	case errors.Is(err, prom.ErrNoData):
-		// No traffic is not an incident; clear any progress.
+		// No traffic clears any progress but is not a recovery: a firing
+		// incident going quiet could be the service scaled to zero or fully
+		// down, not fixed, so state resets without a resolution report.
 		st.state, st.since = inactive, time.Time{}
 		return 0, false
 	case err != nil:
@@ -305,6 +333,13 @@ func (d *Detector) evaluateSignal(ctx context.Context, now time.Time, key string
 
 	threshold := d.effectiveThreshold(s, t)
 	if !breached(value, s.Signal.Comparison, threshold) {
+		// A firing incident whose signal falls back under the threshold has
+		// recovered: close the loop with a resolution before clearing state.
+		// Only the firing->clear edge resolves, so a pending breach that never
+		// fired, and an already-clear signal, produce nothing.
+		if st.state == firing && d.OnResolve != nil {
+			d.resolve(ctx, s, t, value, threshold, st.since, now)
+		}
 		st.state, st.since = inactive, time.Time{}
 		// Only healthy (non-breaching) values feed the baseline, so an
 		// ongoing incident can never drift the learned normal upward and
@@ -434,6 +469,22 @@ func (d *Detector) deliver(ctx context.Context, key string, s catalog.Scenario, 
 		return
 	}
 	st.state = firing
+}
+
+// resolve reports a firing incident's recovery. Best effort: a failing
+// resolution handler is logged, never retried, and never blocks clearing the
+// state, because the incident is genuinely over.
+func (d *Detector) resolve(ctx context.Context, s catalog.Scenario, t Target, value, threshold float64, since, now time.Time) {
+	if err := d.OnResolve(ctx, Resolution{
+		Scenario:   s,
+		Params:     t.Params,
+		Value:      value,
+		Threshold:  threshold,
+		Since:      since,
+		ResolvedAt: now,
+	}); err != nil {
+		d.Log("%s: resolution handler: %v", s.ID, err)
+	}
 }
 
 func (d *Detector) gatherEvidence(ctx context.Context, s catalog.Scenario, params map[string]string) []EvidenceResult {

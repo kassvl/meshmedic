@@ -194,6 +194,14 @@ func runWatch(args []string) {
 
 	d := detect.New(scenarios, cfg.Targets, prom.NewClient(cfg.Prometheus), handler)
 	d.Log = logger.Printf
+	// Close the loop: when a firing incident recovers, print the resolution so
+	// the operator watching the terminal sees the incident open and then clear
+	// with its own duration.
+	d.OnResolve = func(_ context.Context, res detect.Resolution) error {
+		fmt.Println(report.Resolved(res))
+		logger.Printf("%s: resolved after %s", res.Scenario.ID, res.Duration().Round(time.Second))
+		return nil
+	}
 	if reader, err := kube.NewReader(); err != nil {
 		logger.Printf("configuration and triage evidence disabled: %v", err)
 	} else {

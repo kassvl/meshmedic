@@ -86,3 +86,33 @@ func TestMarkdownContainsTheStoryAndThePatch(t *testing.T) {
 		t.Errorf("evidence rows not ranked biggest-first (v2 at %d, v1 at %d)\n---\n%s", v2, v1, out)
 	}
 }
+
+func TestResolvedReportsTheClosingStory(t *testing.T) {
+	res := detect.Resolution{
+		Scenario: catalog.Scenario{
+			ID:     "canary-latency-rollback",
+			Title:  "Canary subset latency regression",
+			Signal: catalog.Signal{Comparison: ">", Threshold: 1000},
+		},
+		Params:     map[string]string{"service": "payments", "namespace": "prod"},
+		Value:      142.5,
+		Threshold:  1000,
+		Since:      time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC),
+		ResolvedAt: time.Date(2026, 7, 17, 12, 4, 30, 0, time.UTC),
+	}
+	out := Resolved(res)
+	for _, want := range []string{
+		"## Resolved: Canary subset latency regression",
+		"`canary-latency-rollback`",
+		"`namespace=prod` `service=payments`",
+		"has recovered",
+		"back to **142.5**",
+		"2026-07-17T12:00:00Z",
+		"2026-07-17T12:04:30Z",
+		"duration of 4m30s",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("resolved report missing %q\n---\n%s", want, out)
+		}
+	}
+}

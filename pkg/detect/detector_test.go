@@ -128,9 +128,9 @@ func TestQueryErrorPreservesPendingState(t *testing.T) {
 		offset time.Duration
 		value  float64
 	}{
-		{0, 1},                // pending
+		{0, 1},                 // pending
 		{30 * time.Second, -1}, // scrape error, state survives
-		{60 * time.Second, 1}, // held 60s from start, fires
+		{60 * time.Second, 1},  // held 60s from start, fires
 	})
 	if len(fired) != 1 {
 		t.Fatalf("got %d incidents, want 1: scrape errors must not reset a breach", len(fired))
@@ -576,5 +576,103 @@ func TestTargetScenarioFilter(t *testing.T) {
 	d.Tick(context.Background(), time.Now())
 	if len(fired) != 0 {
 		t.Fatalf("got %d incidents, want 0: target filter must exclude the scenario", len(fired))
+	}
+}
+
+// scriptedWithResolve runs the timeline like scripted but also captures
+// resolutions, so the closed-loop tests can assert on both edges.
+func scriptedWithResolve(t *testing.T, steps []struct {
+	offset time.Duration
+	value  float64
+}) ([]Incident, []Resolution) {
+	t.Helper()
+	var fired []Incident
+	var resolved []Resolution
+	idx := 0
+	q := querierFunc(func(context.Context, string) (float64, error) {
+		v := steps[idx].value
+		switch {
+		case v == -2:
+			return 0, prom.ErrNoData
+		case v < 0:
+			return 0, errors.New("scrape failed")
+		}
+		return v, nil
+	})
+	d := New(
+		[]catalog.Scenario{testScenario()},
+		[]Target{{Params: map[string]string{}}},
+		q,
+		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
+	)
+	d.OnResolve = func(_ context.Context, r Resolution) error { resolved = append(resolved, r); return nil }
+	base := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
+	for idx = 0; idx < len(steps); idx++ {
+		d.Tick(context.Background(), base.Add(steps[idx].offset))
+	}
+	return fired, resolved
+}
+
+func TestResolutionReportsOnRecovery(t *testing.T) {
+	base := time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC)
+	fired, resolved := scriptedWithResolve(t, []struct {
+		offset time.Duration
+		value  float64
+	}{
+		{0, 1},                 // breach starts, pending
+		{60 * time.Second, 1},  // held 60s, fires
+		{90 * time.Second, 1},  // still firing
+		{120 * time.Second, 0}, // recovers -> one resolution
+		{150 * time.Second, 0}, // stays clear, no duplicate
+	})
+	if len(fired) != 1 {
+		t.Fatalf("got %d incidents, want 1", len(fired))
+	}
+	if len(resolved) != 1 {
+		t.Fatalf("got %d resolutions, want 1", len(resolved))
+	}
+	r := resolved[0]
+	if !r.Since.Equal(base) {
+		t.Errorf("resolution since %v, want breach start %v", r.Since, base)
+	}
+	if want := base.Add(120 * time.Second); !r.ResolvedAt.Equal(want) {
+		t.Errorf("resolved at %v, want %v", r.ResolvedAt, want)
+	}
+	if want := 120 * time.Second; r.Duration() != want {
+		t.Errorf("duration %v, want %v", r.Duration(), want)
+	}
+}
+
+func TestNoResolutionWhenIncidentNeverFired(t *testing.T) {
+	// A breach that clears before the for-duration never became an incident,
+	// so there is nothing to resolve.
+	_, resolved := scriptedWithResolve(t, []struct {
+		offset time.Duration
+		value  float64
+	}{
+		{0, 1},                // pending
+		{30 * time.Second, 0}, // clears before the 60s for-duration
+	})
+	if len(resolved) != 0 {
+		t.Fatalf("got %d resolutions, want 0 (never fired)", len(resolved))
+	}
+}
+
+func TestNoResolutionWhenTrafficVanishes(t *testing.T) {
+	// A firing incident going to no-data resets without a resolution: no
+	// traffic is not the same as recovery.
+	fired, resolved := scriptedWithResolve(t, []struct {
+		offset time.Duration
+		value  float64
+	}{
+		{0, 1},                 // pending
+		{60 * time.Second, 1},  // fires
+		{90 * time.Second, -2}, // ErrNoData clears state, but not a recovery
+	})
+	if len(fired) != 1 {
+		t.Fatalf("got %d incidents, want 1", len(fired))
+	}
+	if len(resolved) != 0 {
+		t.Fatalf("got %d resolutions, want 0 (no-data is not recovery)", len(resolved))
 	}
 }

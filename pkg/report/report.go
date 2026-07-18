@@ -126,6 +126,32 @@ func Markdown(inc detect.Incident, patch string) string {
 	return b.String()
 }
 
+// Resolved renders the closing report for a recovered incident: what fired,
+// when it opened, when it cleared, and how long it was open. It is the other
+// half of Markdown, so an operator watching the terminal sees the incident
+// open and then close with its own MTTR.
+func Resolved(res detect.Resolution) string {
+	s := res.Scenario
+	var b strings.Builder
+	fmt.Fprintf(&b, "## Resolved: %s\n\n", s.Title)
+	fmt.Fprintf(&b, "Scenario `%s` for %s has recovered.\n\n", s.ID, formatParams(res.Params))
+	fmt.Fprintf(&b, "The signal is back to **%.4g** (threshold %s %.4g). Open from %s to %s, a duration of %s.\n",
+		res.Value, s.Signal.Comparison, res.Threshold,
+		res.Since.UTC().Format(time.RFC3339),
+		res.ResolvedAt.UTC().Format(time.RFC3339),
+		formatDuration(res.Duration()))
+	return b.String()
+}
+
+// formatDuration renders an incident's open interval at second resolution;
+// sub-second precision is noise for an MTTR line.
+func formatDuration(d time.Duration) string {
+	if d < time.Second {
+		return "under 1s"
+	}
+	return d.Round(time.Second).String()
+}
+
 // sampleName renders one evidence row's identity: the query name plus the
 // sample's labels in PromQL selector form, so a per-workload breakdown reads
 // like errors-by-workload{destination_workload="payments-v2"}.
