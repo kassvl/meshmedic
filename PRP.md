@@ -134,7 +134,15 @@ Full plan lives in the session plan file; gates here.
 Execution style: firsts and PRP updates are done by the main model,
 one at a time, examine-then-produce; subagents (sonnet) only generate W2
 taxonomy candidates. No catalog/scenario entry merges without testbed
-validation. Weekly scope = one demoable deliverable.
+validation. Weekly scope = one demoable deliverable. Before every push, run
+the same checks CI runs (`go build ./... && go vet ./... && go test ./... &&
+validate` for the tool; `shellcheck` for the bench).
+
+Taxonomy validation order: finish the current tier completely before
+starting the next. "Finish" means every candidate in the tier is either
+validated on the testbed and merged, or deferred with a documented finding.
+No skipping ahead to a lower tier or to a later week while the current tier
+has unprocessed candidates.
 
 ## 6. Honesty rails & limits
 

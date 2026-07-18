@@ -13,8 +13,8 @@ func TestLoadRealCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(scenarios) != 11 {
-		t.Fatalf("got %d scenarios, want 11", len(scenarios))
+	if len(scenarios) != 12 {
+		t.Fatalf("got %d scenarios, want 12", len(scenarios))
 	}
 	for i := 1; i < len(scenarios); i++ {
 		if scenarios[i-1].ID >= scenarios[i].ID {

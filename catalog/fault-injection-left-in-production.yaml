@@ -1,0 +1,53 @@
+id: fault-injection-left-in-production
+title: Fault-injection VirtualService left in production
+severity: critical
+description: >
+  A VirtualService is injecting faults (aborts or delays) into live traffic:
+  requests fail with the FI response flag, usually a leftover from a chaos
+  test or a staging config that reached production. The FI flag is the tell.
+  Unlike a genuine 5xx surge, the endpoints are healthy and the failures are
+  synthetic, so outlier ejection would evict good hosts for no reason and a
+  backend fix would find nothing wrong. No patch is proposed automatically:
+  removing a fault stanza cleanly needs the VirtualService's real routes, and
+  regenerating it would risk replacing a considered routing table. Instead
+  this entry pins the offending VirtualService and its fault configuration so
+  the operator can remove exactly that stanza.
+signal:
+  promql: >
+    sum(rate(istio_requests_total{reporter="waypoint", destination_service_name="{{.service}}",
+    destination_service_namespace="{{.namespace}}", response_flags="FI"}[2m]))
+  comparison: ">"
+  threshold: 0.5
+  for: 60s
+evidence:
+  - name: fault-injected-rate
+    promql: >
+      sum(rate(istio_requests_total{reporter="waypoint", destination_service_name="{{.service}}",
+      destination_service_namespace="{{.namespace}}", response_flags="FI"}[5m]))
+objectEvidence:
+  # The VirtualService's fault stanza: the exact config to remove.
+  - name: virtualservice-fault
+    apiVersion: networking.istio.io/v1
+    kind: VirtualService
+    object: "{{.service}}"
+    namespace: "{{.namespace}}"
+    fields:
+      - spec.http[*].fault
+suppresses:
+  # Injected 503s are 5xx and would trip error-surge, but the endpoints are
+  # healthy and outlier ejection is the wrong fix; the injected fault is the
+  # cause, so hold error-surge back.
+  - error-surge-outlier-ejection
+remediation:
+  target:
+    apiVersion: networking.istio.io/v1
+    kind: VirtualService
+  action: report-only
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 1
+rollback: >
+  Not applicable: nothing is applied. Remove the fault stanza from the named
+  VirtualService, preserving the existing routes and weights. If the fault
+  injection is intentional (an active chaos experiment), this is working as
+  designed and the alert is the thing to silence, not the config.
