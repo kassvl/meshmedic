@@ -57,7 +57,7 @@ Prometheus signal --> catalog match --> rendered Istio patch --> pull request --
 
 ## Catalog
 
-Eighteen entries today, each with the PromQL that detects it, evidence
+Nineteen entries today, each with the PromQL that detects it, evidence
 queries for the report, guardrails, and a rollback note. Entries that carry a
 mesh-native patch propose it; entries where the right fix depends on intent
 are `report-only` and deliver an evidence dossier instead of a guess.
@@ -79,6 +79,7 @@ are `report-only` and deliver an evidence dossier instead of a guess.
 | `mtls-policy-conflict-ambient` | plaintext client denied at L4 by ztunnel | scoped PERMISSIVE fallback, from TCP telemetry |
 | `authz-deny-flood` | AuthorizationPolicy denying live traffic (403) | report-only |
 | `rate-limit-throttling` | traffic rejected with 429/RL by a rate limit | report-only, lists the EnvoyFilters |
+| `external-authz-denial` | traffic denied by an external authz service (403/UAEX) | report-only, lists the EnvoyFilters |
 | `fault-injection-left-in-production` | a fault-injection rule left enabled (FI) | report-only |
 | `waypoint-overload-scale` | ambient waypoint saturated | scale the waypoint deployment |
 | `traffic-vanished-triage` | traffic to a service stopped (client-side) | report-only dossier |
@@ -144,7 +145,7 @@ $ go run ./cmd/meshmedic validate
 ID                            SEVERITY  TARGET              TITLE
 canary-latency-rollback       critical  VirtualService      Canary subset latency regression
 ...
-catalog OK: 18 scenarios
+catalog OK: 19 scenarios
 ```
 
 Point the detector at a Prometheus and it evaluates every catalog signal for
@@ -155,7 +156,7 @@ rendered patch, and the rollback note.
 
 ```console
 $ go run ./cmd/meshmedic watch --config examples/watch.yaml
-meshmedic: watching 18 scenarios for 1 targets against http://localhost:9090 every 30s
+meshmedic: watching 19 scenarios for 1 targets against http://localhost:9090 every 30s
 ```
 
 Add a `gitops` section to the config and set `MESHMEDIC_GITHUB_TOKEN` (or

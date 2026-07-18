@@ -1,0 +1,60 @@
+id: external-authz-denial
+title: Traffic denied by an external authorization service (403/UAEX)
+severity: critical
+description: >
+  Requests to the service are being rejected with HTTP 403 and the UAEX
+  (unauthorized external service) response flag: an external authorization
+  service, wired in through an ext_authz filter, is denying the traffic. This is
+  distinct from a native Istio AuthorizationPolicy, which stamps DENY: the
+  decision here is made outside the mesh, so the fix is at the external authz
+  service and its filter, not an Istio policy. The important failure mode is not
+  a deliberate deny but an authz service that is misconfigured or down: when the
+  authz dependency fails closed, every request becomes a 403 and the whole
+  service is dark, even though the service itself is healthy. The report names
+  who is being denied and lists the EnvoyFilters, where the ext_authz wiring
+  lives. No patch is proposed: whether to fix the authz service, its rules, or
+  the filter's failure mode is the operator's call.
+signal:
+  # UAEX is only stamped by an ext_authz denial, so the flag alone is the
+  # signal, unambiguous against a generic 403 an application might return.
+  # Validated live via an ext_authz EnvoyFilter on the payments waypoint.
+  promql: >
+    sum(rate(istio_requests_total{reporter=~"source|waypoint",
+    destination_service_name="{{.service}}", destination_service_namespace="{{.namespace}}",
+    response_flags="UAEX"}[2m]))
+  comparison: ">"
+  threshold: 0.5
+  for: 60s
+evidence:
+  # Who is being denied, biggest first, so the report names the affected caller.
+  - name: denied-by-source
+    promql: >
+      sum by (source_workload) (rate(istio_requests_total{reporter=~"source|waypoint",
+      destination_service_name="{{.service}}", destination_service_namespace="{{.namespace}}",
+      response_flags="UAEX"}[5m]))
+objectEvidence:
+  # Every EnvoyFilter in the namespace, where the ext_authz wiring lives, so the
+  # authorization service and its filter are visible.
+  - name: envoyfilters-in-namespace
+    apiVersion: networking.istio.io/v1alpha3
+    kind: EnvoyFilter
+    object: "*"
+    namespace: "{{.namespace}}"
+    fields:
+      - items[*].metadata.name
+      - items[*].spec.configPatches[*].applyTo
+remediation:
+  target:
+    apiVersion: networking.istio.io/v1alpha3
+    kind: EnvoyFilter
+  action: report-only
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 1
+rollback: >
+  Not applicable: nothing is applied. Find the EnvoyFilter in the evidence that
+  wires the ext_authz service and check whether that service is healthy and its
+  rules are correct. If the authz service is down, restore it or, if the policy
+  intent allows, switch the filter to fail-open so a dead authz service stops
+  turning into a total outage. If the denials are deliberate, the caller is the
+  one to fix.

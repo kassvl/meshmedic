@@ -56,7 +56,7 @@ Engine v0.3 - all verified by unit tests (7/7 packages) and live bench runs:
 - Deterministic triage layer: absence signal (`or vector(0)` + `offset`),
   namespace log-signature sweep, ReplicaSet rollout diff; `report-only`
   scenarios produce a dossier instead of a patch.
-- Catalog: 18 entries, every signal validated by injecting the fault on the
+- Catalog: 19 entries, every signal validated by injecting the fault on the
   testbed and observing real telemetry before merge. `no-route-blackhole` (NR,
   404 no-route) is the first source-keyed entry: live validation found that a
   no-route request carries `destination_service_name=unknown`, so it keys on
@@ -86,17 +86,20 @@ Engine v0.3 - all verified by unit tests (7/7 packages) and live bench runs:
   first: an HTTPRoute backend pointed at a dead port surfaced as the gateway
   returning 500 to users, and the dossier listed the HTTPRoutes with the broken
   `port: 9999` visible.
-  The testbed also grew a local rate limit (an EnvoyFilter on the payments
-  waypoint, applied only as a fault): `rate-limit-throttling` fires on the RL
-  flag (429), names the throttled caller, and lists the namespace EnvoyFilters
-  so the token bucket is visible.
+  The testbed also grew two EnvoyFilter faults on the payments waypoint (applied
+  only as faults, not part of the healthy testbed): a local rate limit, caught
+  by `rate-limit-throttling` on the RL flag (429); and an ext_authz filter
+  calling a deny-all authz service, caught by `external-authz-denial` on the
+  UAEX flag (403), distinct from the native-policy DENY of `authz-deny-flood`.
+  Both name the affected caller and list the namespace EnvoyFilters.
   Catalog target is roughly 24-28 validated common classes (the power-law head),
-  not a vanity count; the dependency chain, ingress gateway, sidecar mode, and
-  rate limit are done. The distinct-class ceiling is honest: some mesh failures
-  are the same class at a different hop (a 404 is a 404), so an entry is added
-  only when the class is genuinely distinct, not to reach a number. Remaining
-  candidates: external authz (UAEX), ingress TLS/cert, connection-failure
-  family (UF/UC/UR) once an injectable mechanism is found.
+  not a vanity count; the dependency chain, ingress gateway, sidecar mode, rate
+  limit, and external authz are done. The distinct-class ceiling is honest: some
+  mesh failures are the same class at a different hop (a 404 is a 404), so an
+  entry is added only when the class is genuinely distinct, not to reach a
+  number. Remaining candidates: ingress TLS/cert (likely an object-state check,
+  not telemetry) and the connection-failure family (UF/UC/UR) once an injectable
+  mechanism is found.
 - Taxonomy tiers 1-3 complete: 36 candidates processed, each validated on the
   testbed or deferred with a documented finding (kube-state-metrics gap,
   no downstream/ingress/sidecar/multi-cluster on the testbed, or subsumed by

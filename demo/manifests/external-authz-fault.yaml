@@ -1,0 +1,83 @@
+# FAULT injection, not part of the healthy testbed: 02-app.sh does not apply
+# this. Apply it to reproduce the external-authz-denial scenario (an ext_authz
+# filter on the payments waypoint calling an authorization service that denies
+# every request, so live traffic is rejected with 403/UAEX), and delete it to
+# reset:
+#   kubectl apply -f demo/manifests/external-authz-fault.yaml
+#   kubectl -n demo delete envoyfilter payments-ext-authz
+#   kubectl -n demo delete deployment,service ext-authz
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ext-authz
+  namespace: demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ext-authz
+  template:
+    metadata:
+      labels:
+        app: ext-authz
+    spec:
+      containers:
+        - name: ext-authz
+          image: nicholasjackson/fake-service:v0.26.2
+          ports:
+            - containerPort: 9090
+          env:
+            - name: NAME
+              value: ext-authz
+            - name: ERROR_RATE
+              value: "1.0"
+            - name: ERROR_CODE
+              value: "403"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ext-authz
+  namespace: demo
+spec:
+  selector:
+    app: ext-authz
+  ports:
+    - name: http
+      port: 9090
+      targetPort: 9090
+---
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: payments-ext-authz
+  namespace: demo
+spec:
+  targetRefs:
+    - kind: Gateway
+      group: gateway.networking.k8s.io
+      name: waypoint
+  configPatches:
+    - applyTo: HTTP_FILTER
+      match:
+        context: GATEWAY
+        listener:
+          filterChain:
+            filter:
+              name: envoy.filters.network.http_connection_manager
+      patch:
+        operation: INSERT_BEFORE
+        value:
+          name: envoy.filters.http.ext_authz
+          typed_config:
+            "@type": type.googleapis.com/envoy.extensions.filters.http.ext_authz.v3.ExtAuthz
+            transport_api_version: V3
+            http_service:
+              server_uri:
+                uri: ext-authz.demo.svc.cluster.local:9090
+                cluster: outbound|9090||ext-authz.demo.svc.cluster.local
+                timeout: 1s
+              authorization_request:
+                allowed_headers:
+                  patterns:
+                    - exact: ":path"
