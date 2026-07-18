@@ -1,0 +1,63 @@
+id: ingress-edge-outage
+title: Users getting 5xx at the ingress gateway
+severity: critical
+description: >
+  The ingress gateway is returning 5xx to the traffic entering through it, so
+  users cannot reach the app at all. This is a front-door outage, distinct from
+  a single service erroring inside the mesh: the request fails at or before the
+  gateway's backend, so no amount of internal health matters if users cannot
+  get in. The usual causes are a broken HTTPRoute (a backend pointing at a wrong
+  port or a service that does not exist), a backend with no healthy endpoints,
+  or a listener or certificate problem on the gateway. The report lists the
+  HTTPRoutes bound to the gateway with their backends, so the broken route is
+  visible. No patch is proposed: the fix depends on which of those causes it is,
+  and regenerating the routing blind would risk replacing a considered edge
+  configuration with a guess.
+signal:
+  # The ingress gateway as a destination: 5xx it returned to incoming traffic.
+  # Validated live: an HTTPRoute backend pointed at a dead port surfaced here as
+  # ingress-istio returning 500 to the edge loadgen. ingress_workload names the
+  # auto-provisioned gateway deployment (Gateway name + "-istio").
+  promql: >
+    sum(rate(istio_requests_total{reporter=~"source|waypoint",
+    destination_workload="{{.ingress_workload}}", destination_service_namespace="{{.namespace}}",
+    response_code=~"5.."}[2m]))
+  comparison: ">"
+  threshold: 0.5
+  for: 60s
+evidence:
+  # The edge error rate broken out by code, so 503 (no backend) reads
+  # differently from 500 (backend refused) in the report.
+  - name: edge-errors-by-code
+    promql: >
+      sum by (response_code) (rate(istio_requests_total{reporter=~"source|waypoint",
+      destination_workload="{{.ingress_workload}}", destination_service_namespace="{{.namespace}}",
+      response_code=~"5.."}[5m]))
+objectEvidence:
+  # Every HTTPRoute in the namespace with its hostnames and backends, so a
+  # backend pointing at the wrong port or a missing service is visible next to
+  # the edge 5xx.
+  - name: httproutes-in-namespace
+    apiVersion: gateway.networking.k8s.io/v1
+    kind: HTTPRoute
+    object: "*"
+    namespace: "{{.namespace}}"
+    fields:
+      - items[*].metadata.name
+      - items[*].spec.hostnames
+      - items[*].spec.rules[*].backendRefs
+remediation:
+  target:
+    apiVersion: gateway.networking.k8s.io/v1
+    kind: HTTPRoute
+  action: report-only
+guardrails:
+  requiresApproval: true
+  maxAppliesPerHour: 1
+rollback: >
+  Not applicable: nothing is applied. Check the HTTPRoutes in the evidence: a
+  backend pointing at the wrong port or a service that does not exist is the
+  common cause, and edge-errors-by-code tells 503 (no healthy backend) from 500
+  (backend refused the connection). If the routes are correct, look at the
+  gateway's listeners and certificates. Restore the intended backend or fix the
+  gateway configuration.
