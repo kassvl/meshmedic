@@ -57,8 +57,11 @@ Engine v0.3 - all verified by unit tests (7/7 packages) and live bench runs:
   and relative thresholds (`baselineMultiplier`), so a scenario can fire on a
   deviation from a target's own learned normal instead of a fixed number.
   Warm-up guardrail (static threshold until enough healthy samples); only
-  non-breaching values feed the baseline. Unit-tested; the F9 recorder builds
-  on it next.
+  non-breaching values feed the baseline. Unit-tested.
+- Unmatched-incident recorder (`pkg/recorder`, F9): baselines a set of generic
+  anomaly signals per target and appends a fingerprint when one deviates while
+  no catalog scenario is active. Records only, human-curated; the guardrail
+  against learning noise into confident wrongness. Unit-tested.
 
 Benchmark ([mesh-incidents-bench](https://github.com/kassvl/mesh-incidents-bench)) v0.2 leaderboard (6 scenarios, 36 pts):
 
@@ -109,7 +112,7 @@ if counter-examples surface.
 | F6 | First MTTD comparison across mesh troubleshooting tools | Planned (W2) | harness timestamps exist | - |
 | F7 | First mesh/Istio analyzer for k8sgpt (inside a CNCF project) | Planned (W4) | - | verify none merged upstream before PR |
 | F8 | First controlled same-model comparison: dossier-fed single-shot vs agent-driven investigation | Planned (W5) | free via mistral tier | doubles as thesis material |
-| F9 | First mesh tool that learns signatures from the incidents it sees in production, deterministically and human-curated | Planned (W3) | unmatched-incident recorder, adjacent to baseline memory | records only; no learned signature can remediate without human review + testbed validation |
+| F9 | First mesh tool that learns signatures from the incidents it sees in production, deterministically and human-curated | **Staked** | meshmedic `ad446af` (pkg/recorder + detector anomaly watch), unit-tested | records only; no learned signature can remediate without human review + testbed validation |
 
 ## 5. Execution plan (6 weeks, career-first, 10-15 h/wk, $0 budget)
 

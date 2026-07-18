@@ -76,9 +76,12 @@ the mechanism generalizes to any bad client deploy, not just this fixture.
   relative thresholds (`baselineMultiplier`) so a scenario fires on a
   deviation from a target's own normal. Warm-up guardrail; only healthy
   values feed the baseline
-- [ ] Unmatched-incident recorder (F9): record the fingerprint of a
-  baseline deviation with no matching catalog entry, human-curated, records
-  only
+- [x] Unmatched-incident recorder (F9): `pkg/recorder` appends a fingerprint
+  when a baselined anomaly signal deviates while no catalog scenario is
+  active. Records only, human-curated; the guardrail against learning noise
+
+**M2.7 is done**: catalog 12, bench 11, plus the baseline-memory and
+unmatched-incident-recorder foundations, all unit-tested.
 
 ## M3: live inside the ecosystem
 
