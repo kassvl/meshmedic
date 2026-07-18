@@ -92,6 +92,7 @@ if counter-examples surface.
 | F6 | First MTTD comparison across mesh troubleshooting tools | Planned (W2) | harness timestamps exist | — |
 | F7 | First mesh/Istio analyzer for k8sgpt (inside a CNCF project) | Planned (W4) | — | verify none merged upstream before PR |
 | F8 | First controlled same-model comparison: dossier-fed single-shot vs agent-driven investigation | Planned (W5) | free via mistral tier | doubles as thesis material |
+| F9 | First mesh tool that learns signatures from the incidents it sees in production, deterministically and human-curated | Planned (W3) | unmatched-incident recorder, adjacent to baseline memory | records only; no learned signature can remediate without human review + testbed validation |
 
 ## 5. Execution plan (6 weeks, career-first, 10-15 h/wk, $0 budget)
 
@@ -108,8 +109,17 @@ Full plan lives in the session plan file; gates here.
 - **W2 — taxonomy wave 1**: 4 sonnet subagents generate grounded
   candidates (Istio issues + Holmes corpus); Fable validates 4-6 classes
   on the testbed; catalog 9→13+, bench 6→8; F5 encyclopedia + F6 MTTD.
-- **W3 — baseline memory**: `pkg/baseline` EWMA store + relative
-  thresholds; the "knows your cluster's normal" moat.
+- **W3 — baseline memory + unmatched-incident recorder**: `pkg/baseline`
+  EWMA store + relative thresholds (the "knows your cluster's normal" moat),
+  plus a recorder that logs the telemetry fingerprint of any deviation with
+  no matching catalog entry. The recorder is the production-fed, automatic
+  version of this session's manual taxonomy wave: the tool accumulates what
+  it actually sees. Hard guardrail: it records only. No learned signature
+  can drive remediation without human review and testbed validation, the
+  same discipline that caught the OOM signal gap, the route-timeout cascade,
+  and the wrong-port empty-reply signature live this session. Learn, record,
+  human/testbed validates, catalog grows. This is the antivirus/SIEM model,
+  not LLM self-training, so it does not compromise determinism.
 - **W4 — ecosystem**: k8sgpt analyzer PR (F7, intent-issue first) +
   Istio community meeting demo request.
 - **W5 — closed loop + storm + architecture proof**: resolution reports;
