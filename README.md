@@ -34,8 +34,9 @@ L4 denials that never reach request metrics. On the benchmark's mesh
 scenarios, object-state analyzers score zero because the objects stay
 healthy while the telemetry degrades, and the agentic tool matched on the
 scenarios it finished but exhausted its step budget on others. MeshMedic
-owns the moment a running mesh breaks and answers with mesh-native fixes in
-seconds.
+owns the moment a running mesh breaks and answers in seconds: a mesh-native
+patch where the fix is mechanical and safe, and an evidence dossier that names
+the root cause where it is not.
 
 ```
 Prometheus signal --> catalog match --> rendered Istio patch --> pull request --> human merges --> mesh heals
