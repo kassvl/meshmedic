@@ -86,10 +86,13 @@ the mechanism generalizes to any bad client deploy, not just this fixture.
 unmatched-incident-recorder foundations, unit-tested and live-validated on
 the testbed (`demo/baseline-relative/`, `demo/f9-recorder/`).
 
-## M3: live inside the ecosystem
+## M3: prove and present the system
 
-- k8sgpt custom analyzer covering the catalog's detection side
-- Demo at an Istio community meeting, then a CFP for a lightning talk
+- Architecture-proof experiment: the same model fed a MeshMedic dossier in one
+  shot versus driving an agent investigation, measured side by side, to show
+  the edge is the deterministic pipeline, not the model
+- Present MeshMedic to the community (Istio meeting demo, a CFP for a lightning
+  talk). This sells our own system; it does not contribute to another tool
 
 ## M4: earn the right to be a project
 

@@ -122,7 +122,7 @@ if counter-examples surface.
 | F4 | First practical reference for ztunnel L4 denial telemetry | **Staked** | bench `docs/ambient-l4-denial-telemetry.md`; labels verified live on Istio 1.24.1 | Doc pins version; signal shape is inherent to ambient mTLS |
 | F5 | First comprehensive ambient-mesh failure-mode encyclopedia | Planned (W2) | taxonomy pipeline | - |
 | F6 | First MTTD comparison across mesh troubleshooting tools | Planned (W2) | harness timestamps exist | - |
-| F7 | First mesh/Istio analyzer for k8sgpt | Prior-art clear (W4) | Prior-art search 2026-07-18: k8sgpt has no Istio analyzer (built-ins are core K8s + OLM + Gateway API; integrations are aws/keda/kyverno/prometheus; code search for istio/virtualservice/peerauthentication all 0; no open PR/issue proposes one) | `istioctl analyze` exists but is Istio's own static config linter, not a k8sgpt analyzer and not telemetry-based. Realistic path is a standalone k8sgpt custom analyzer (gRPC), not an upstream built-in: maintainers steer non-core analyzers there. Claim scoped to "first Istio mesh analyzer for the k8sgpt ecosystem" |
+| F7 | ~~First mesh/Istio analyzer for k8sgpt~~ | Dropped | - | Out of scope by decision: building a k8sgpt custom analyzer grows another tool's ecosystem, not MeshMedic. Same stance as the no-HolmesGPT-contribution rule. Comparing against k8sgpt/Holmes to show MeshMedic is better stays in; producing content for their ecosystems does not |
 | F8 | First controlled same-model comparison: dossier-fed single-shot vs agent-driven investigation | Planned (W5) | free via mistral tier | doubles as thesis material |
 | F9 | First mesh tool that learns signatures from the incidents it sees in production, deterministically and human-curated | **Staked** | meshmedic `ad446af` (pkg/recorder + detector anomaly watch); unit-tested + live run in `demo/f9-recorder/` (baseline held frozen while 13 fingerprints logged, catalog silent) | records only; no learned signature can remediate without human review + testbed validation |
 
@@ -152,13 +152,21 @@ Full plan lives in the session plan file; gates here.
   and the wrong-port empty-reply signature live this session. Learn, record,
   human/testbed validates, catalog grows. This is the antivirus/SIEM model,
   not LLM self-training, so it does not compromise determinism.
-- **W4 - ecosystem**: k8sgpt analyzer PR (F7, intent-issue first) +
-  Istio community meeting demo request.
-- **W5 - closed loop + storm + architecture proof**: resolution reports;
-  storm scenario; F8 experiment recorded.
-- **W6 - launch**: gate = ecosystem PR live + docs polished + leaderboard
-  current + demo video; then Show HN / r/kubernetes / Istio Slack, CFP
-  draft. CNCF Sandbox talk only after real adopters (M4).
+- **W4 - deepen the system (MeshMedic-native)**: strengthen MeshMedic's own
+  capabilities, not another tool's ecosystem. Candidates: closed-loop
+  resolution reports (a "resolved" report with MTTR when a signal clears),
+  storm scenario (concurrent faults, dedup/suppression under load), richer
+  triage (rollout-diff attached to any report-only incident, not just
+  traffic-vanished), and more validated catalog classes. The dropped k8sgpt
+  analyzer (F7) is explicitly out: it would grow k8sgpt, not MeshMedic.
+- **W5 - architecture proof + comparison**: F8 same-model/two-architectures
+  experiment (dossier-fed single-shot vs agent-driven), recorded to prove the
+  edge is architecture, not model. Comparisons that show MeshMedic beats
+  Holmes/k8sgpt are in scope; building for their ecosystems is not.
+- **W6 - launch**: gate = docs polished + leaderboard current + demo video;
+  then present MeshMedic (Show HN / r/kubernetes / Istio Slack), CFP draft.
+  Presenting our own system for visibility is fine; the launch sells
+  MeshMedic, it does not contribute to competitors.
 
 Execution style: firsts and PRP updates are done by the main model,
 one at a time, examine-then-produce; subagents (sonnet) only generate W2
