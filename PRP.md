@@ -87,7 +87,7 @@ if counter-examples surface.
 | F1 | First OSS tool detecting ambient strict-mTLS denials from ztunnel L4 telemetry | **Staked** | meshmedic `f1fb440` (catalog/mtls-policy-conflict-ambient.yaml); bench raw `mtls-conflict-meshmedic-20260717-222548.txt` | Prior-art search 2026-07-18: no GitHub equivalent found |
 | F2 | First reproducible mesh-incident diagnosis benchmark with a tool leaderboard | **Staked** | bench `aa818f1`; README leaderboard | Chaos tools inject but do not score diagnosis; academic LLM evals are not tool leaderboards |
 | F3 | First published "investigation footprint" measurement (cluster mutations by diagnostic tools) | Planned (W1-2) | harness footer already measures it; writeup pending | — |
-| F4 | First practical reference for ztunnel L4 denial telemetry | Planned (W1) | spike data in bench raws; doc pending | — |
+| F4 | First practical reference for ztunnel L4 denial telemetry | **Staked** | bench `docs/ambient-l4-denial-telemetry.md`; labels verified live on Istio 1.24.1 | Doc pins version; signal shape is inherent to ambient mTLS |
 | F5 | First comprehensive ambient-mesh failure-mode encyclopedia | Planned (W2) | taxonomy pipeline | — |
 | F6 | First MTTD comparison across mesh troubleshooting tools | Planned (W2) | harness timestamps exist | — |
 | F7 | First mesh/Istio analyzer for k8sgpt (inside a CNCF project) | Planned (W4) | — | verify none merged upstream before PR |
