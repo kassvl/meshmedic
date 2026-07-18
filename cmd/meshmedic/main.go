@@ -26,6 +26,7 @@ import (
 	"github.com/kassvl/meshmedic/pkg/gitops"
 	"github.com/kassvl/meshmedic/pkg/kube"
 	"github.com/kassvl/meshmedic/pkg/prom"
+	"github.com/kassvl/meshmedic/pkg/recorder"
 	"github.com/kassvl/meshmedic/pkg/remediate"
 	"github.com/kassvl/meshmedic/pkg/report"
 )
@@ -206,6 +207,15 @@ func runWatch(args []string) {
 		}
 		d.Baseline = store
 		logger.Printf("baseline-relative thresholds enabled, state at %s", cfg.BaselineState)
+
+		if cfg.UnmatchedLog != "" && len(cfg.AnomalyWatch) > 0 {
+			d.Recorder = recorder.New(cfg.UnmatchedLog)
+			d.AnomalyWatch = cfg.AnomalyWatch
+			logger.Printf("unmatched-incident recorder enabled, %d anomaly signals, log at %s",
+				len(cfg.AnomalyWatch), cfg.UnmatchedLog)
+		}
+	} else if cfg.UnmatchedLog != "" {
+		logger.Printf("unmatched-incident recorder needs baselineState set; skipping")
 	}
 
 	logger.Printf("watching %d scenarios for %d targets against %s every %s",

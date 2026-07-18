@@ -12,6 +12,7 @@ import (
 	"github.com/kassvl/meshmedic/pkg/catalog"
 	"github.com/kassvl/meshmedic/pkg/kube"
 	"github.com/kassvl/meshmedic/pkg/prom"
+	"github.com/kassvl/meshmedic/pkg/recorder"
 )
 
 type querierFunc func(ctx context.Context, promql string) (float64, error)
@@ -489,6 +490,75 @@ func TestBaselineRelativeDoesNotFireBeforeWarmup(t *testing.T) {
 	d.Tick(context.Background(), time.Now())
 	if len(fired) != 0 {
 		t.Fatal("fired before baseline warm-up; must fall back to the static threshold")
+	}
+}
+
+type fakeRecorder struct{ fps []recorder.Fingerprint }
+
+func (f *fakeRecorder) Record(fp recorder.Fingerprint) error {
+	f.fps = append(f.fps, fp)
+	return nil
+}
+
+func anomalyDetector(t *testing.T, scenarioThreshold float64, valuePtr *float64, rec *fakeRecorder) *Detector {
+	t.Helper()
+	s := testScenario()
+	s.Signal.For = ""
+	s.Signal.Comparison = ">"
+	s.Signal.Threshold = scenarioThreshold
+	d := New(
+		[]catalog.Scenario{s},
+		[]Target{{Params: map[string]string{"service": "payments"}}},
+		querierFunc(func(context.Context, string) (float64, error) { return *valuePtr, nil }),
+		func(context.Context, Incident) error { return nil },
+	)
+	d.Baseline = baseline.New(filepath.Join(t.TempDir(), "b.json"), 0.3)
+	d.Recorder = rec
+	d.AnomalyWatch = []catalog.Query{{Name: "5xx-rate", PromQL: "vector(1)"}}
+	d.AnomalyMinSamples = 5
+	d.AnomalyFactor = 3
+	return d
+}
+
+func TestAnomalyRecorderRecordsUnexplainedDeviation(t *testing.T) {
+	value := 10.0
+	rec := &fakeRecorder{}
+	// Scenario threshold is high, so the catalog never fires and the anomaly
+	// deviation is genuinely unexplained.
+	d := anomalyDetector(t, 1000, &value, rec)
+
+	base := time.Now()
+	for i := 0; i < 6; i++ {
+		d.Tick(context.Background(), base.Add(time.Duration(i)*time.Second))
+	}
+	if len(rec.fps) != 0 {
+		t.Fatalf("recorded during warm-up: %v", rec.fps)
+	}
+	value = 40 // 4x the ~10 baseline, past the factor of 3
+	d.Tick(context.Background(), base.Add(10*time.Second))
+	if len(rec.fps) != 1 {
+		t.Fatalf("got %d fingerprints, want 1 after a 4x deviation", len(rec.fps))
+	}
+	if rec.fps[0].Signal != "5xx-rate" || rec.fps[0].Factor < 3 {
+		t.Fatalf("fingerprint %+v, want the 5xx-rate signal at >3x", rec.fps[0])
+	}
+}
+
+func TestAnomalyRecorderStaysQuietWhenCatalogExplainsIt(t *testing.T) {
+	value := 10.0
+	rec := &fakeRecorder{}
+	// Scenario threshold is 20: the deviation to 40 also puts the catalog
+	// scenario in breach, so the anomaly is explained and must not record.
+	d := anomalyDetector(t, 20, &value, rec)
+
+	base := time.Now()
+	for i := 0; i < 6; i++ {
+		d.Tick(context.Background(), base.Add(time.Duration(i)*time.Second))
+	}
+	value = 40 // deviates for the anomaly, and breaches the catalog scenario
+	d.Tick(context.Background(), base.Add(10*time.Second))
+	if len(rec.fps) != 0 {
+		t.Fatalf("recorded %v while the catalog scenario was in breach; a catalog-explained anomaly must not be recorded", rec.fps)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/kassvl/meshmedic/pkg/catalog"
 	"gopkg.in/yaml.v3"
 )
 
@@ -20,6 +21,13 @@ type Config struct {
 	// Empty disables baseline-relative thresholds; scenarios then use their
 	// static thresholds only.
 	BaselineState string `yaml:"baselineState"`
+
+	// AnomalyWatch and UnmatchedLog drive the unmatched-incident recorder:
+	// generic signals baselined per target, with a fingerprint appended to
+	// UnmatchedLog when one deviates while no catalog scenario is active.
+	// Both must be set, and BaselineState too, for the recorder to run.
+	AnomalyWatch []catalog.Query `yaml:"anomalyWatch"`
+	UnmatchedLog string          `yaml:"unmatchedLog"`
 }
 
 // GitOps configures where remediation pull requests go. Absent means watch

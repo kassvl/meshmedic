@@ -18,6 +18,7 @@ import (
 	"github.com/kassvl/meshmedic/pkg/catalog"
 	"github.com/kassvl/meshmedic/pkg/kube"
 	"github.com/kassvl/meshmedic/pkg/prom"
+	"github.com/kassvl/meshmedic/pkg/recorder"
 )
 
 // Querier is the slice of Prometheus the detector needs. prom.Client
@@ -68,6 +69,12 @@ type TriageReader interface {
 type BaselineStore interface {
 	Observe(key string, value float64)
 	Baseline(key string, minSamples int) (float64, bool)
+}
+
+// RecorderStore is the slice of the recorder package the detector needs.
+// recorder.Recorder satisfies it.
+type RecorderStore interface {
+	Record(recorder.Fingerprint) error
 }
 
 // Incident is a scenario firing for a target.
@@ -161,6 +168,16 @@ type Detector struct {
 	// normal. Defaults to nil (static thresholds only).
 	Baseline BaselineStore
 
+	// Recorder, AnomalyWatch, AnomalyFactor and AnomalyMinSamples drive the
+	// unmatched-incident recorder: generic signals baselined per target, and
+	// a fingerprint written when one deviates by AnomalyFactor while no
+	// catalog scenario is active for that target. Records only; needs
+	// Baseline set too. AnomalyFactor defaults to 3, AnomalyMinSamples to 20.
+	Recorder          RecorderStore
+	AnomalyWatch      []catalog.Query
+	AnomalyFactor     float64
+	AnomalyMinSamples int
+
 	// Log receives non-fatal evaluation problems (template errors, query
 	// failures). Defaults to discarding them; the CLI wires it to stderr.
 	Log func(format string, args ...any)
@@ -238,6 +255,16 @@ func (d *Detector) Tick(ctx context.Context, now time.Time) {
 			}
 		}
 
+		// Unmatched-incident recorder: if the catalog has nothing to say about
+		// this target right now, watch the generic anomaly signals and record
+		// any that deviate from their learned normal. Records only.
+		if d.Recorder != nil && d.Baseline != nil && len(d.AnomalyWatch) > 0 {
+			catalogActive := len(inBreach) > 0
+			for _, w := range d.AnomalyWatch {
+				d.watchAnomaly(ctx, t, w, catalogActive)
+			}
+		}
+
 		for _, du := range due {
 			if by, ok := suppressedBy[du.s.ID]; ok {
 				d.Log("%s: suppressed by %s: cascade symptom, not a second incident", du.key, by)
@@ -302,6 +329,50 @@ func (d *Detector) evaluateSignal(ctx context.Context, now time.Time, key string
 		// Already delivered; stay quiet until the condition clears.
 	}
 	return value, false
+}
+
+// watchAnomaly evaluates one generic anomaly signal for a target. It records
+// a fingerprint when the signal deviates from its learned baseline by the
+// configured factor while no catalog scenario is active, and feeds only
+// non-deviating values into the baseline so an anomaly cannot become the new
+// normal. It never fires an incident or a patch; recording is the whole job.
+func (d *Detector) watchAnomaly(ctx context.Context, t Target, w catalog.Query, catalogActive bool) {
+	query, err := renderQuery("anomaly/"+w.Name, w.PromQL, t.Params)
+	if err != nil {
+		d.Log("anomaly %s: rendering: %v", w.Name, err)
+		return
+	}
+	value, err := d.querier.Query(ctx, query)
+	if err != nil {
+		// No data or a scrape blip: nothing to record or learn this tick.
+		return
+	}
+	factor := d.AnomalyFactor
+	if factor <= 1 {
+		factor = 3
+	}
+	minSamples := d.AnomalyMinSamples
+	if minSamples <= 0 {
+		minSamples = 20
+	}
+	key := baselineKey("anomaly-"+w.Name, t.Params)
+	base, ready := d.Baseline.Baseline(key, minSamples)
+	deviating := ready && base > 0 && (value > base*factor || value < base/factor)
+
+	if deviating && !catalogActive {
+		if err := d.Recorder.Record(recorder.Fingerprint{
+			Target:   t.Params,
+			Signal:   w.Name,
+			Value:    value,
+			Baseline: base,
+			Factor:   value / base,
+		}); err != nil {
+			d.Log("anomaly %s: record: %v", w.Name, err)
+		}
+	}
+	if !deviating {
+		d.Baseline.Observe(key, value)
+	}
 }
 
 // effectiveThreshold returns the threshold to compare against: the signal's
