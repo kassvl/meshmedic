@@ -40,8 +40,11 @@ Engine v0.3 - all verified by unit tests (7/7 packages) and live bench runs:
 - Deterministic triage layer: absence signal (`or vector(0)` + `offset`),
   namespace log-signature sweep, ReplicaSet rollout diff; `report-only`
   scenarios produce a dossier instead of a patch.
-- Catalog: 9 entries, every signal validated by injecting the fault on the
-  testbed and observing real telemetry before merge.
+- Catalog: 11 entries, every signal validated by injecting the fault on the
+  testbed and observing real telemetry before merge. Newest: `authz-deny-flood`
+  (403 authorization denials, report-only) and `route-timeout-too-short`
+  (504/UT, report-only, suppresses error-surge). The triage layer generalized
+  to `client-wrong-port` (empty-reply signature) with no new catalog entry.
 
 Benchmark ([mesh-incidents-bench](https://github.com/kassvl/mesh-incidents-bench)) v0.2 leaderboard (6 scenarios, 36 pts):
 
