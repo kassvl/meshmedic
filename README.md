@@ -16,7 +16,8 @@ carries the diagnosis, labeled evidence, configuration reads, and a rollback
 plan. When the failure sits outside the catalog, a triage layer assembles a
 dossier instead: which callers went silent, which workloads are logging
 known failure signatures, and what rolled out recently with the exact
-template diff.
+template diff. When the incident recovers, it closes the loop with a
+resolution report and the time the incident was open.
 
 Its scores against LLM-agentic and analyzer-based tools are published, with
 the methodology and the reproducible scenarios, in
@@ -42,10 +43,12 @@ Prometheus signal --> catalog match --> rendered Istio patch --> pull request --
 
 ## Design rules
 
-1. **Deterministic remediation.** Every fix comes from a reviewed catalog
-   entry with an explicit signal, guardrails, and a rollback story. A language
-   model may write the incident narrative in the PR body. It never writes the
-   patch. Improvised YAML during an outage is how incidents get worse.
+1. **Deterministic by commitment.** Every fix comes from a reviewed catalog
+   entry with an explicit signal, guardrails, and a rollback story. There is
+   no LLM in the detection or remediation path, and that is the identity, not
+   a limitation to grow out of: the moment a model writes the applied patch,
+   the guarantees below (zero cost, reproducibility, safety) are gone.
+   Improvised YAML during an outage is how incidents get worse.
 2. **Pull requests, not kubectl.** MeshMedic needs no write access to the
    cluster. The fix lands as a PR in your config repo with PromQL evidence
    attached, your existing policy checks (OPA, CI) run against it, and a human
@@ -53,30 +56,68 @@ Prometheus signal --> catalog match --> rendered Istio patch --> pull request --
 
 ## Catalog
 
-| Scenario | Failure | Mesh-native fix |
+Fourteen entries today, each with the PromQL that detects it, evidence
+queries for the report, guardrails, and a rollback note. Entries that carry a
+mesh-native patch propose it; entries where the right fix depends on intent
+are `report-only` and deliver an evidence dossier instead of a guess.
+
+| Scenario | Failure | Response |
 | --- | --- | --- |
 | `canary-latency-rollback` | canary subset p99 regression | VirtualService weights back to stable |
+| `latency-regression-vs-baseline` | p99 above the service's own learned normal | report-only, relative threshold |
 | `error-surge-outlier-ejection` | sustained 5xx from bad endpoints | DestinationRule outlier detection |
 | `retry-storm-damping` | retries amplifying an outage | cut retry attempts, hard route timeout |
 | `connection-pool-overflow` | UO flags, circuit breaker shedding load | raise pool limits, with resource evidence |
+| `route-timeout-too-short` | 504/UT, timeout shorter than backend latency | report-only |
+| `no-route-blackhole` | 404/NR, requests match no route | report-only, source-keyed |
+| `upstream-host-ejection-flood` | UH flags, mesh refuses ready endpoints | cap ejection, set minHealthPercent |
 | `mtls-policy-conflict` | plaintext clients hit strict mTLS (L7) | scoped PERMISSIVE fallback, flagged temporary |
 | `mtls-policy-conflict-ambient` | plaintext client denied at L4 by ztunnel | scoped PERMISSIVE fallback, from TCP telemetry |
-| `upstream-host-ejection-flood` | UH flags, mesh refuses ready endpoints | cap ejection, set minHealthPercent |
+| `authz-deny-flood` | AuthorizationPolicy denying live traffic (403) | report-only |
+| `fault-injection-left-in-production` | a fault-injection rule left enabled (FI) | report-only |
 | `waypoint-overload-scale` | ambient waypoint saturated | scale the waypoint deployment |
-| `traffic-vanished-triage` | traffic to a service stopped (client-side) | report-only dossier, no patch |
+| `traffic-vanished-triage` | traffic to a service stopped (client-side) | report-only dossier |
 
-Every entry ships with the PromQL that detects it, evidence queries for the
-PR body, guardrails, and a rollback note. Signals are labeled, so the report
-names the offending workload rather than collapsing to one number, and can
-attach configuration reads (a bad env var, a policy mode) and, for triage
-entries, log signatures and rollout diffs. Entries are plain YAML in
-[`catalog/`](catalog/); adding one is a PR, not a code change. No entry
-merges without injecting the fault on the testbed and confirming the signal
-is real.
+Signals are labeled, so the report names the offending workload rather than
+collapsing to one number, and can attach configuration reads (a bad env var,
+a policy mode) and, for triage entries, log signatures and rollout diffs.
+Entries are plain YAML in [`catalog/`](catalog/); adding one is a PR, not a
+code change. No entry merges without injecting the fault on the testbed and
+confirming the signal is real, a discipline that has repeatedly caught what
+the specification does not tell you: that a no-route request is stamped
+`destination_service_name=unknown` (so `no-route-blackhole` keys on the
+source), that a wrong-port client logs "Empty reply from server" rather than
+"connection refused", and that a rolled-back Deployment reuses its
+ReplicaSet, defeating age-based rollout detection.
 
-### Detection where request metrics go blind
+## Beyond the fixed catalog
 
-Two catalog entries exist because the usual signals are silent:
+Three engine capabilities extend detection past a static list of thresholds,
+each unit-tested and validated live on the testbed (captured runs in
+[`demo/`](demo/)):
+
+- **Baseline memory** ([`pkg/baseline`](pkg/baseline)): a scenario can fire on
+  a deviation from a target's own learned normal instead of a fixed number.
+  `latency-regression-vs-baseline` catches a latency regression that is
+  abnormal for this cluster yet below any fixed SLO. A warm-up guardrail keeps
+  a cold start from firing on noise, and only healthy values feed the
+  baseline, so an ongoing incident cannot drift the normal upward and silence
+  itself ([`demo/baseline-relative`](demo/baseline-relative)).
+- **Closed loop** (resolution reports): when a firing incident's signal falls
+  back under its threshold, MeshMedic prints a resolution with the interval
+  the incident was open. Only a genuine recovery resolves; a breach that
+  never fired, or one whose traffic simply vanished, produces no false
+  all-clear ([`demo/closed-loop`](demo/closed-loop)).
+- **Unmatched-incident recorder** ([`pkg/recorder`](pkg/recorder)): a
+  deviation from the learned baseline that no catalog entry explains is
+  written to a log as a fingerprint for a human to review and, if real, turn
+  into a validated entry. It records only. No learned signature ever drives
+  remediation without human review and testbed validation
+  ([`demo/f9-recorder`](demo/f9-recorder)).
+
+## Detection where request metrics go blind
+
+Some entries exist because the usual signals are silent:
 
 - `mtls-policy-conflict-ambient` reads ztunnel's L4 telemetry
   (`istio_tcp_connections_closed_total` with `response_flags="DENY"`), the
@@ -86,6 +127,10 @@ Two catalog entries exist because the usual signals are silent:
   flow, then attaches the client's own failure logs and the most recent
   rollout diff. A bad client deploy stops the traffic and shows up nowhere
   in mesh request metrics; the root cause is usually one line of that diff.
+- `no-route-blackhole` fires when requests match no route (404/NR). Because
+  a no-route request never resolves a destination, it is attributed to the
+  source: the report names the black-holed caller and lists the namespace's
+  VirtualServices, so the over-narrow or removed route is visible.
 
 ## Try it
 
@@ -94,27 +139,18 @@ $ go run ./cmd/meshmedic validate
 ID                            SEVERITY  TARGET              TITLE
 canary-latency-rollback       critical  VirtualService      Canary subset latency regression
 ...
-catalog OK: 9 scenarios
-
-$ go run ./cmd/meshmedic render --scenario canary-latency-rollback \
-    --set service=payments --set namespace=prod \
-    --set subset=v2 --set stable_subset=v1
-apiVersion: networking.istio.io/v1
-kind: VirtualService
-...
+catalog OK: 14 scenarios
 ```
-
-`validate` reports 9 scenarios today.
 
 Point the detector at a Prometheus and it evaluates every catalog signal for
 the targets you configure, holding each breach for the scenario's `for`
 duration before it fires. When one fires, it prints the incident report the
-future PR opener will use as the pull request body: diagnosis, evidence
-table, the rendered patch, and the rollback note.
+PR opener uses as the pull request body: diagnosis, evidence table, the
+rendered patch, and the rollback note.
 
 ```console
 $ go run ./cmd/meshmedic watch --config examples/watch.yaml
-meshmedic: watching 9 scenarios for 1 targets against http://localhost:9090 every 30s
+meshmedic: watching 14 scenarios for 1 targets against http://localhost:9090 every 30s
 ```
 
 Add a `gitops` section to the config and set `MESHMEDIC_GITHUB_TOKEN` (or
@@ -128,10 +164,6 @@ gitops:
   path: istio/{{.namespace}}/{{.scenario}}.yaml
 ```
 
-```console
-meshmedic: canary-latency-rollback: opened https://github.com/you/your-config-repo/pull/1
-```
-
 ## Prior art and limits
 
 The closest prior art is [Robusta](https://github.com/robusta-dev/robusta)'s
@@ -143,23 +175,28 @@ message). k8sgpt and LLM-agentic tools are complementary rather than
 competing: the first reads object state, the second reasons about
 open-ended incidents; MeshMedic reads the telemetry layer between them.
 
-The limits are deliberate and worth stating plainly. The catalog and triage
-signatures cover frequent, signature-bearing failure classes: mesh
-misconfigurations, bad client deploys, DNS and connection and TLS errors,
-and configuration accidents. Novel failure modes with no signature,
-cross-service causal chains, and problems that never emit a signal are out
-of reach by design. Signatures need curation, which is why they live in a
-reviewable catalog. An optional LLM layer may one day narrate a finished
-dossier, but it will never drive detection, and MeshMedic is meant to stay
-complete without it.
+The limits are deliberate and worth stating plainly. Total coverage is
+impossible for any tool: even the strongest LLM agents top out well short of
+every scenario. So comprehensive coverage is not the goal. The goal is to
+cover the common failure classes deterministically, degrade gracefully on
+the tail (a triage dossier rather than nothing), and grow the catalog through
+the recorder loop. The catalog and triage signatures cover frequent,
+signature-bearing failure classes: mesh misconfigurations, bad client
+deploys, DNS and connection and TLS errors, and configuration accidents.
+Novel failure modes with no signature, cross-service causal chains, and
+problems that never emit a signal are out of reach by design. Stating what
+the tool cannot see is part of trusting what it can.
 
 ## Roadmap
 
-See [ROADMAP.md](ROADMAP.md). The first milestone was a 60 second video of a
-mesh healing itself through a merged pull request; the second was the
-[reproducible mesh incident benchmark](https://github.com/kassvl/mesh-incidents-bench).
-Both are done. Current work extends the deterministic taxonomy and adds a
-baseline-memory layer so thresholds adapt to a cluster's own normal.
+See [ROADMAP.md](ROADMAP.md). The 60 second video of a mesh healing itself
+through a merged pull request and the
+[reproducible mesh incident benchmark](https://github.com/kassvl/mesh-incidents-bench)
+are both done, as are the baseline-memory, closed-loop, and
+unmatched-incident-recorder layers above. Current work extends the
+deterministic taxonomy from the mesh's own failure vocabulary (Envoy response
+flags) and hardens the benchmark's credibility with scenarios authored
+independently of this tool.
 
 ## License
 
