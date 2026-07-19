@@ -167,6 +167,10 @@ const (
 type entry struct {
 	state state
 	since time.Time
+	// paramSkipLogged remembers that this scenario/target pair was reported
+	// as not applicable (signal needs a param the target does not define),
+	// so a whole-catalog watch logs the skip once instead of every tick.
+	paramSkipLogged bool
 }
 
 // Detector evaluates targets against scenarios on every Tick.
@@ -313,6 +317,17 @@ func (d *Detector) evaluateSignal(ctx context.Context, now time.Time, key string
 
 	query, err := renderQuery(s.ID, s.Signal.PromQL, t.Params)
 	if err != nil {
+		// A target that lacks a param the signal template needs is not an
+		// error: the scenario does not apply to that target (an ingress
+		// entry evaluated for a plain service target, say). Report it once
+		// and stay quiet afterwards.
+		if strings.Contains(err.Error(), "map has no entry for key") {
+			if !st.paramSkipLogged {
+				d.Log("%s: not applicable to this target, signal needs a param the target does not define: %v", key, err)
+				st.paramSkipLogged = true
+			}
+			return 0, false
+		}
 		d.Log("%s: rendering signal: %v", key, err)
 		return 0, false
 	}

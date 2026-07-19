@@ -3,6 +3,7 @@ package detect
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -80,6 +81,40 @@ func scripted(t *testing.T, steps []struct {
 		d.Tick(context.Background(), base.Add(steps[idx].offset))
 	}
 	return fired
+}
+
+// A catalog entry whose signal needs a param the target does not define is
+// not an error: the scenario simply does not apply to that target. The skip
+// is logged once, not on every tick, so a whole-catalog watch stays readable.
+func TestMissingParamSkipsScenarioForTarget(t *testing.T) {
+	s := testScenario()
+	s.Signal.PromQL = `sum(rate(requests{workload="{{.ingress_workload}}"}[2m]))`
+	var logged []string
+	var fired []Incident
+	q := querierFunc(func(context.Context, string) (float64, error) { return 1, nil })
+	d := New(
+		[]catalog.Scenario{s},
+		[]Target{{Params: map[string]string{"service": "payments"}}},
+		q,
+		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
+	)
+	d.Log = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+	base := time.Date(2026, 7, 19, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < 3; i++ {
+		d.Tick(context.Background(), base.Add(time.Duration(i)*30*time.Second))
+	}
+	if len(fired) != 0 {
+		t.Fatalf("scenario fired despite a missing param: %+v", fired)
+	}
+	skips := 0
+	for _, l := range logged {
+		if strings.Contains(l, "not applicable to this target") {
+			skips++
+		}
+	}
+	if skips != 1 {
+		t.Fatalf("got %d skip log lines over 3 ticks, want exactly 1: %v", skips, logged)
+	}
 }
 
 func TestFiresOnlyAfterForDurationHolds(t *testing.T) {
