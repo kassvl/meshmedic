@@ -139,7 +139,11 @@ Some entries exist because the usual signals are silent:
 
 ## Try it
 
+MeshMedic is a single Go binary plus the reviewable `catalog/` directory it
+reads at startup (`--catalog` points it elsewhere). With Go 1.26+ installed:
+
 ```console
+$ git clone https://github.com/kassvl/meshmedic.git && cd meshmedic
 $ go run ./cmd/meshmedic validate
 ID                            SEVERITY  TARGET              TITLE
 canary-latency-rollback       critical  VirtualService      Canary subset latency regression
