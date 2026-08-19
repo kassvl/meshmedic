@@ -4,6 +4,46 @@ Deterministic first responder for service-mesh incidents: it detects in
 seconds, opens an evidence-dossier pull request, and does it with zero LLM
 and zero cluster mutation.
 
+## Run it
+
+Against a Prometheus you already run. No config file, no demo cluster, nothing
+to install but a container runtime:
+
+```console
+$ docker run --rm --network host ghcr.io/kassvl/meshmedic:latest \
+    watch --prometheus http://localhost:9090 \
+          --target service=payments,namespace=demo
+meshmedic: watching 18 scenarios for 1 targets against http://localhost:9090 every 30s
+```
+
+It evaluates every catalog signal against that target and prints the incident
+report the moment one fires: diagnosis, labeled evidence, the rendered patch,
+and the rollback note. Nothing is written to your cluster; MeshMedic holds no
+write credentials at all.
+
+Prefer a binary? Either of these:
+
+```console
+$ go install github.com/kassvl/meshmedic/cmd/meshmedic@latest   # Go 1.21+
+```
+
+or a [release archive](https://github.com/kassvl/meshmedic/releases) for linux
+and macOS on amd64 and arm64.
+
+Building from a clone works too and needs nothing but Go:
+
+```console
+$ git clone https://github.com/kassvl/meshmedic.git && cd meshmedic
+$ go build -o meshmedic ./cmd/meshmedic
+$ ./meshmedic validate
+catalog OK: 18 scenarios
+```
+
+However you get it, the reviewed catalog and its lock are compiled into the
+binary, so a single file is the whole tool: no directory to place, nothing to
+point at, and it runs from anywhere. `--catalog` still overrides both when you
+want to run entries of your own.
+
 ![MeshMedic demo: chaos to merged PR to healed mesh](demo/video/meshmedic-demo.gif)
 
 *Every frame above is real: a live kind + Istio ambient mesh, a real latency
@@ -43,23 +83,42 @@ Prometheus signal --> catalog match --> rendered Istio patch --> pull request --
 
 ## Design rules
 
-1. **Deterministic by commitment.** Every fix comes from a reviewed catalog
+1. **Silence is only ever reported as an answer when the tool can prove it was
+   looking.** Every evaluation resolves to one of four states, never two:
+   `firing`, `clear`, `blind`, or `unlocked`. An empty query result, a zero
+   value, and a query error are three different facts about the world and stay
+   distinct all the way to the report. Each cycle runs a coverage probe per
+   target; a target that fails it is *unobserved*, and every scenario against
+   it reports `blind` rather than `clear`. `meshmedic check` exits non-zero
+   when any target is unobserved, so a blind detector fails your readiness
+   check instead of looking healthy.
+2. **Deterministic by commitment.** Every fix comes from a reviewed catalog
    entry with an explicit signal, guardrails, and a rollback story. There is
    no LLM in the detection or remediation path, and that is the identity, not
    a limitation to grow out of: the moment a model writes the applied patch,
    the guarantees below (zero cost, reproducibility, safety) are gone.
    Improvised YAML during an outage is how incidents get worse.
-2. **Pull requests, not kubectl.** MeshMedic needs no write access to the
+3. **Pull requests, not kubectl.** MeshMedic needs no write access to the
    cluster. The fix lands as a PR in your config repo with PromQL evidence
    attached, your existing policy checks (OPA, CI) run against it, and a human
    merges it. The audit trail is the git history you already have.
 
 ## Catalog
 
-Nineteen entries today, each with the PromQL that detects it, evidence
-queries for the report, guardrails, and a rollback note. Entries that carry a
+Eighteen entries today, each with the PromQL that detects it, evidence queries
+for the report, guardrails, and a rollback note. Entries that carry a
 mesh-native patch propose it; entries where the right fix depends on intent
 are `report-only` and deliver an evidence dossier instead of a guess.
+
+Sixteen of them have been demonstrated end to end on a live cluster: the fault
+injected, a real detector watching, and the entry asserted to fire within its
+own hold duration, name the actual culprit, keep its declared neighbours quiet,
+and clear when the fault is removed. The runs are kept in
+[`demo/proof-reports/`](demo/proof-reports/). The remaining two are declared
+unprovable on this testbed in [`proof/UNPROVABLE.yaml`](proof/UNPROVABLE.yaml),
+each with the measurement behind the claim, so nothing is silently unverified.
+Entries that were retired, and what was measured to justify retiring them, are
+in [`catalog/RETIRED.md`](catalog/RETIRED.md).
 
 | Scenario | Failure | Response |
 | --- | --- | --- |
@@ -74,7 +133,6 @@ are `report-only` and deliver an evidence dossier instead of a guess.
 | `no-route-blackhole` | 404/NR, requests match no route | report-only, source-keyed |
 | `ingress-edge-outage` | users getting 5xx at the ingress gateway (front-door outage) | report-only, lists the HTTPRoutes |
 | `upstream-host-ejection-flood` | UH flags, mesh refuses ready endpoints | cap ejection, set minHealthPercent |
-| `mtls-policy-conflict` | plaintext clients hit strict mTLS (L7) | scoped PERMISSIVE fallback, flagged temporary |
 | `mtls-policy-conflict-ambient` | plaintext client denied at L4 by ztunnel | scoped PERMISSIVE fallback, from TCP telemetry |
 | `authz-deny-flood` | AuthorizationPolicy denying live traffic (403) | report-only |
 | `rate-limit-throttling` | traffic rejected with 429/RL by a rate limit | report-only, lists the EnvoyFilters |
@@ -137,35 +195,41 @@ Some entries exist because the usual signals are silent:
   source: the report names the black-holed caller and lists the namespace's
   VirtualServices, so the over-narrow or removed route is visible.
 
-## Try it
+## Configuring more than one target
 
-MeshMedic is a single Go binary plus the reviewable `catalog/` directory it
-reads at startup (`--catalog` points it elsewhere). With Go 1.26+ installed:
-
-```console
-$ git clone https://github.com/kassvl/meshmedic.git && cd meshmedic
-$ go run ./cmd/meshmedic validate
-ID                            SEVERITY  TARGET              TITLE
-canary-latency-rollback       critical  VirtualService      Canary subset latency regression
-...
-catalog OK: 19 scenarios
-```
-
-Point the detector at a Prometheus and it evaluates every catalog signal for
-the targets you configure, holding each breach for the scenario's `for`
-duration before it fires. When one fires, it prints the incident report the
-PR opener uses as the pull request body: diagnosis, evidence table, the
-rendered patch, and the rollback note.
+MeshMedic is a single Go binary carrying the reviewed `catalog/` and its lock
+(`--catalog`, or `MESHMEDIC_CATALOG`, points it at a directory instead, which
+is what you want while editing entries).
+The flag form above is the fast path for one target; a config file is how you
+watch several, tune the interval, and turn on the features below.
 
 ```console
-$ go run ./cmd/meshmedic watch --config examples/watch.yaml
-meshmedic: watching 19 scenarios for 1 targets against http://localhost:9090 every 30s
+$ meshmedic validate                       # what the engine knows how to fix
+catalog OK: 18 scenarios
+$ meshmedic watch --config examples/watch.yaml
 ```
 
-Add a `gitops` section to the config and set `MESHMEDIC_GITHUB_TOKEN` (or
-`GITHUB_TOKEN`), and firing turns into a pull request instead of only a
-report: a branch named after the episode, one commit with the patch file,
-and the incident report as the PR body.
+Each target is a set of template parameters. Every catalog signal is evaluated
+against it, and a breach must hold for the scenario's `for` duration before it
+fires, which is the discipline that keeps thresholds from chasing noise.
+
+```yaml
+prometheus: http://localhost:9090
+interval: 30s
+targets:
+  - params:
+      service: payments
+      namespace: demo
+      workload: payments-v2
+      subset: v2
+      stable_subset: v1
+```
+
+Add a `gitops` section and set `MESHMEDIC_GITHUB_TOKEN` (or `GITHUB_TOKEN`),
+and firing turns into a pull request instead of only a report: a branch named
+after the episode, one commit with the patch file, and the incident report as
+the PR body. This is deliberately config-file-only, because write access to a
+repository should not be reachable from a flag pasted out of a README.
 
 ```yaml
 gitops:
@@ -198,6 +262,19 @@ deploys, DNS and connection and TLS errors, and configuration accidents.
 Novel failure modes with no signature, cross-service causal chains, and
 problems that never emit a signal are out of reach by design. Stating what
 the tool cannot see is part of trusting what it can.
+
+## Contributing
+
+The most useful contribution is a catalog entry, and the process for one is
+unusual enough to be worth reading first: no entry merges on the strength of
+its PromQL looking right, it merges when the fault has been injected on a real
+mesh and the signal watched to appear. [CONTRIBUTING.md](CONTRIBUTING.md) walks
+through it, and [catalog/RETIRED.md](catalog/RETIRED.md) is the fastest way to
+see what the bar is, because it records an entry that was removed after
+measurement showed the telemetry it read does not exist.
+
+What this tool can and cannot reach, and why `meshmedic-prove` is a separate
+download, are in [SECURITY.md](SECURITY.md).
 
 ## Roadmap
 

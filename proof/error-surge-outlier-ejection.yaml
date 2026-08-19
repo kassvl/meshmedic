@@ -1,0 +1,28 @@
+entry: error-surge-outlier-ejection
+summary: >
+  The canary subset returns 500 for 90 percent of requests. This is the honest
+  representative of its class: a bad deploy serving errors from a subset of
+  endpoints, which is what outlier ejection exists to contain.
+target:
+  service: payments
+  namespace: demo
+  workload: payments-v2
+  subset: v2
+  stable_subset: v1
+inject:
+  - desc: make the v2 canary serve 500s
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v2, ERROR_RATE=0.9, ERROR_CODE=500]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v2, --timeout=180s]
+reset:
+  - desc: restore the canary
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v2, ERROR_RATE=0, ERROR_CODE-]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v2, --timeout=180s]
+settle: 90s
+firesWithin: 5m
+resolvesWithin: 5m
+expect:
+  # The entry must name the failing subset, not just report a ratio. A 5xx
+  # surge that does not say which workload is emitting them tells an operator
+  # nothing they could not read off a dashboard.
+  names:
+    - payments-v2

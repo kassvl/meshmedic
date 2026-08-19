@@ -22,6 +22,15 @@ type Config struct {
 	// static thresholds only.
 	BaselineState string `yaml:"baselineState"`
 
+	// StateFile is where the incident lifecycle is persisted between ticks,
+	// so a restart does not re-open incidents that are still open. Empty
+	// disables persistence.
+	StateFile string `yaml:"stateFile"`
+
+	// CoverageProbe is the default control query proving a target is visible
+	// at all. Empty uses DefaultCoverageProbe; a target may override it.
+	CoverageProbe string `yaml:"coverageProbe"`
+
 	// AnomalyWatch and UnmatchedLog drive the unmatched-incident recorder:
 	// generic signals baselined per target, with a fingerprint appended to
 	// UnmatchedLog when one deviates while no catalog scenario is active.
@@ -75,6 +84,65 @@ func LoadConfig(path string) (Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// ConfigFromFlags builds a watch config without a file, from a Prometheus URL
+// and one or more `key=value,key=value` target strings. It exists so that
+// pointing MeshMedic at a Prometheus you already run takes one command and no
+// YAML: the difference between reading the README and running the tool.
+//
+// Only the report-printing path is reachable this way. Opening pull requests
+// needs a config file, deliberately: writing to a repository is not something
+// to enable from a flag someone pasted out of a README.
+func ConfigFromFlags(prometheus, interval string, targets []string) (Config, error) {
+	var c Config
+	if prometheus == "" {
+		return c, fmt.Errorf("--prometheus is required")
+	}
+	if len(targets) == 0 {
+		return c, fmt.Errorf("at least one --target is required, e.g. --target service=payments,namespace=demo")
+	}
+	c.Prometheus = prometheus
+	c.Interval = interval
+	if interval != "" {
+		if _, err := time.ParseDuration(interval); err != nil {
+			return c, fmt.Errorf("--interval: %w", err)
+		}
+	}
+	for _, spec := range targets {
+		params, err := ParseTargetSpec(spec)
+		if err != nil {
+			return c, err
+		}
+		c.Targets = append(c.Targets, Target{Params: params})
+	}
+	return c, nil
+}
+
+// ParseTargetSpec turns `service=payments,namespace=demo` into template
+// parameters. An empty key, a missing `=`, or a duplicate key is an error
+// rather than a silent surprise during an incident.
+func ParseTargetSpec(spec string) (map[string]string, error) {
+	params := map[string]string{}
+	for _, pair := range strings.Split(spec, ",") {
+		pair = strings.TrimSpace(pair)
+		if pair == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(pair, "=")
+		k = strings.TrimSpace(k)
+		if !ok || k == "" {
+			return nil, fmt.Errorf("bad --target %q: want key=value pairs separated by commas", spec)
+		}
+		if _, dup := params[k]; dup {
+			return nil, fmt.Errorf("bad --target %q: key %q appears twice", spec, k)
+		}
+		params[k] = strings.TrimSpace(v)
+	}
+	if len(params) == 0 {
+		return nil, fmt.Errorf("bad --target %q: no key=value pairs", spec)
+	}
+	return params, nil
 }
 
 // IntervalDuration returns the evaluation interval, defaulting to 30s.

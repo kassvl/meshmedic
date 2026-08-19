@@ -2,6 +2,14 @@
 # Every target is a set of template parameters evaluated against the catalog.
 prometheus: http://localhost:9090
 interval: 30s
+# Where the incident lifecycle is persisted between ticks. Without it a
+# restart re-opens every incident that is still breaching, which in GitOps
+# mode means a second pull request for an incident already under review.
+stateFile: /var/lib/meshmedic/state.json
+# The control query proving a target is visible at all. The default asserts
+# the target's namespace produces mesh request telemetry; override it here or
+# per target when a namespace is not the right unit of visibility.
+# coverageProbe: 'count(istio_requests_total{destination_service_namespace="{{.namespace}}"})' 
 # Uncomment to open remediation pull requests instead of only printing
 # reports. The token comes from MESHMEDIC_GITHUB_TOKEN or GITHUB_TOKEN.
 # gitops:

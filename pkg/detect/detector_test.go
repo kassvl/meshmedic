@@ -16,6 +16,11 @@ import (
 	"github.com/kassvl/meshmedic/pkg/recorder"
 )
 
+// testProbe is the coverage-probe query every fake below answers with one
+// series, so a test exercising the incident state machine is not also
+// exercising the probe. The tests that are about coverage script it directly.
+const testProbe = "test-coverage-probe"
+
 type querierFunc func(ctx context.Context, promql string) (float64, error)
 
 func (f querierFunc) Query(ctx context.Context, promql string) (float64, error) {
@@ -26,6 +31,9 @@ func (f querierFunc) Query(ctx context.Context, promql string) (float64, error) 
 // state-machine tests have no evidence queries, so this only satisfies the
 // interface. Labeled evidence has its own fake below.
 func (f querierFunc) QuerySeries(ctx context.Context, promql string) ([]prom.Sample, error) {
+	if promql == testProbe {
+		return []prom.Sample{{Value: 1}}, nil
+	}
 	v, err := f(ctx, promql)
 	if err != nil {
 		return nil, err
@@ -72,7 +80,7 @@ func scripted(t *testing.T, steps []struct {
 	})
 	d := New(
 		[]catalog.Scenario{testScenario()},
-		[]Target{{Params: map[string]string{}}},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{}}},
 		q,
 		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
 	)
@@ -94,7 +102,7 @@ func TestMissingParamSkipsScenarioForTarget(t *testing.T) {
 	q := querierFunc(func(context.Context, string) (float64, error) { return 1, nil })
 	d := New(
 		[]catalog.Scenario{s},
-		[]Target{{Params: map[string]string{"service": "payments"}}},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{"service": "payments"}}},
 		q,
 		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
 	)
@@ -193,7 +201,7 @@ func TestZeroForDurationFiresImmediately(t *testing.T) {
 	var fired []Incident
 	d := New(
 		[]catalog.Scenario{s},
-		[]Target{{Params: map[string]string{}}},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{}}},
 		querierFunc(func(context.Context, string) (float64, error) { return 1, nil }),
 		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
 	)
@@ -209,7 +217,7 @@ func TestFailingHandlerKeepsTheEpisodeAlive(t *testing.T) {
 	deliveries, failures := 0, 2
 	d := New(
 		[]catalog.Scenario{s},
-		[]Target{{Params: map[string]string{}}},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{}}},
 		querierFunc(func(context.Context, string) (float64, error) { return 1, nil }),
 		func(_ context.Context, _ Incident) error {
 			deliveries++
@@ -235,7 +243,10 @@ type evidenceQuerier struct{}
 
 func (evidenceQuerier) Query(context.Context, string) (float64, error) { return 1, nil }
 
-func (evidenceQuerier) QuerySeries(context.Context, string) ([]prom.Sample, error) {
+func (evidenceQuerier) QuerySeries(_ context.Context, promql string) ([]prom.Sample, error) {
+	if promql == testProbe {
+		return []prom.Sample{{Value: 1}}, nil
+	}
 	return []prom.Sample{
 		{Labels: map[string]string{"destination_workload": "payments-v2"}, Value: 0.19},
 		{Labels: map[string]string{"destination_workload": "payments-v1"}, Value: 0.002},
@@ -249,7 +260,7 @@ func TestEvidenceKeepsLabels(t *testing.T) {
 	var fired []Incident
 	d := New(
 		[]catalog.Scenario{s},
-		[]Target{{Params: map[string]string{}}},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{}}},
 		evidenceQuerier{},
 		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
 	)
@@ -301,7 +312,7 @@ func TestObjectEvidenceRendersTemplatesAndFields(t *testing.T) {
 	var fired []Incident
 	d := New(
 		[]catalog.Scenario{s},
-		[]Target{{Params: map[string]string{"service": "payments", "subset": "v2", "namespace": "demo"}}},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{"service": "payments", "subset": "v2", "namespace": "demo"}}},
 		querierFunc(func(context.Context, string) (float64, error) { return 1, nil }),
 		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
 	)
@@ -332,7 +343,7 @@ func TestNilObjectReaderSkipsObjectEvidence(t *testing.T) {
 	var fired []Incident
 	d := New(
 		[]catalog.Scenario{s},
-		[]Target{{Params: map[string]string{}}},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{}}},
 		querierFunc(func(context.Context, string) (float64, error) { return 1, nil }),
 		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
 	)
@@ -356,6 +367,9 @@ func (v valueByQuery) Query(_ context.Context, promql string) (float64, error) {
 }
 
 func (v valueByQuery) QuerySeries(ctx context.Context, promql string) ([]prom.Sample, error) {
+	if promql == testProbe {
+		return []prom.Sample{{Value: 1}}, nil
+	}
 	val, err := v.Query(ctx, promql)
 	if err != nil {
 		return nil, err
@@ -381,7 +395,7 @@ func TestSuppressionHoldsBackTheCascadeScenario(t *testing.T) {
 	var fired []Incident
 	d := New(
 		[]catalog.Scenario{cause, symptom},
-		[]Target{{Params: map[string]string{}}},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{}}},
 		q,
 		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
 	)
@@ -440,7 +454,7 @@ func TestTriageEvidenceGathering(t *testing.T) {
 	var fired []Incident
 	d := New(
 		[]catalog.Scenario{s},
-		[]Target{{Params: map[string]string{"namespace": "demo"}}},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{"namespace": "demo"}}},
 		querierFunc(func(context.Context, string) (float64, error) { return 1, nil }),
 		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
 	)
@@ -478,7 +492,7 @@ func TestBaselineRelativeThresholdFiresOnDeviation(t *testing.T) {
 	var fired []Incident
 	d := New(
 		[]catalog.Scenario{s},
-		[]Target{{Params: map[string]string{"service": "payments"}}},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{"service": "payments"}}},
 		q,
 		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
 	)
@@ -517,7 +531,7 @@ func TestBaselineRelativeDoesNotFireBeforeWarmup(t *testing.T) {
 	var fired []Incident
 	d := New(
 		[]catalog.Scenario{s},
-		[]Target{{Params: map[string]string{}}},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{}}},
 		q,
 		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
 	)
@@ -543,7 +557,7 @@ func anomalyDetector(t *testing.T, scenarioThreshold float64, valuePtr *float64,
 	s.Signal.Threshold = scenarioThreshold
 	d := New(
 		[]catalog.Scenario{s},
-		[]Target{{Params: map[string]string{"service": "payments"}}},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{"service": "payments"}}},
 		querierFunc(func(context.Context, string) (float64, error) { return *valuePtr, nil }),
 		func(context.Context, Incident) error { return nil },
 	)
@@ -602,8 +616,9 @@ func TestTargetScenarioFilter(t *testing.T) {
 	d := New(
 		[]catalog.Scenario{testScenario()},
 		[]Target{{
-			Params:    map[string]string{},
-			Scenarios: []string{"some-other-scenario"},
+			CoverageProbe: testProbe,
+			Params:        map[string]string{},
+			Scenarios:     []string{"some-other-scenario"},
 		}},
 		querierFunc(func(context.Context, string) (float64, error) { return 1, nil }),
 		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
@@ -636,7 +651,7 @@ func scriptedWithResolve(t *testing.T, steps []struct {
 	})
 	d := New(
 		[]catalog.Scenario{testScenario()},
-		[]Target{{Params: map[string]string{}}},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{}}},
 		q,
 		func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil },
 	)
@@ -709,5 +724,448 @@ func TestNoResolutionWhenTrafficVanishes(t *testing.T) {
 	}
 	if len(resolved) != 0 {
 		t.Fatalf("got %d resolutions, want 0 (no-data is not recovery)", len(resolved))
+	}
+}
+
+// The invariant WS-1a exists for: an empty result, a zero value, and a query
+// error are three different facts about the world, and a detector that folds
+// them into one silent answer cannot be trusted with any of them.
+func TestEmptyZeroAndErrorAreThreeDistinctOutcomes(t *testing.T) {
+	// The invariant is that the three stay *distinguishable*, not that they
+	// map to three different outcome labels. An empty result on a target the
+	// coverage probe just proved visible is a real answer: a failure-flag
+	// signal returns nothing exactly when the failure is absent. It is
+	// reported clear with a reason that says why, which keeps it separable
+	// from a clear that came from a value under threshold. Blind is reserved
+	// for the cases where the tool genuinely did not get an answer.
+	cases := []struct {
+		name    string
+		answer  func() (float64, error)
+		outcome Outcome
+		reason  string
+	}{
+		{"empty vector", func() (float64, error) { return 0, prom.ErrNoData }, OutcomeClear, "no series"},
+		{"zero value", func() (float64, error) { return 0, nil }, OutcomeClear, ""},
+		{"query error", func() (float64, error) { return 0, errors.New("HTTP 500") }, OutcomeBlind, "query failed"},
+		{"breaching value", func() (float64, error) { return 1, nil }, OutcomeFiring, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			q := querierFunc(func(context.Context, string) (float64, error) { return tc.answer() })
+			d := New([]catalog.Scenario{testScenario()},
+				[]Target{{CoverageProbe: testProbe, Params: map[string]string{}}},
+				q, func(context.Context, Incident) error { return nil })
+			cycle := d.Tick(context.Background(), time.Now())
+
+			if len(cycle.Evaluations) != 1 {
+				t.Fatalf("evaluations = %d, want 1", len(cycle.Evaluations))
+			}
+			got := cycle.Evaluations[0]
+			if got.Outcome != tc.outcome {
+				t.Errorf("outcome = %q, want %q (reason %q)", got.Outcome, tc.outcome, got.Reason)
+			}
+			if tc.reason != "" && !strings.Contains(got.Reason, tc.reason) {
+				t.Errorf("reason = %q, want it to mention %q", got.Reason, tc.reason)
+			}
+			if tc.name == "zero value" && got.Reason != "" {
+				t.Errorf("a measured zero carried reason %q; it must stay separable from an empty result", got.Reason)
+			}
+		})
+	}
+}
+
+// Blind is what the tool reports when it did not get an answer, and the two
+// ways that happens must not be confused with each other or with health.
+func TestBlindIsReservedForNotGettingAnAnswer(t *testing.T) {
+	// Case 1: the target is not visible at all.
+	q := valueByQueryFunc(func(promql string) (float64, error) {
+		if promql == "dark-probe" {
+			return 0, prom.ErrNoData
+		}
+		return 0, nil
+	})
+	d := New([]catalog.Scenario{testScenario()},
+		[]Target{{CoverageProbe: "dark-probe", Params: map[string]string{}}},
+		q, func(context.Context, Incident) error { return nil })
+	cycle := d.Tick(context.Background(), time.Now())
+	if cycle.Blind != 1 || cycle.Clear != 0 {
+		t.Errorf("unobserved target: blind=%d clear=%d, want 1 and 0", cycle.Blind, cycle.Clear)
+	}
+
+	// Case 2: the target is visible but the signal query itself failed.
+	q2 := valueByQueryFunc(func(promql string) (float64, error) {
+		if promql == testProbe {
+			return 1, nil
+		}
+		return 0, errors.New("HTTP 503")
+	})
+	d2 := New([]catalog.Scenario{testScenario()},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{}}},
+		q2, func(context.Context, Incident) error { return nil })
+	cycle2 := d2.Tick(context.Background(), time.Now())
+	if cycle2.Blind != 1 || cycle2.Clear != 0 {
+		t.Errorf("failed signal query: blind=%d clear=%d, want 1 and 0", cycle2.Blind, cycle2.Clear)
+	}
+}
+
+// A target whose coverage probe returns nothing is unobserved, and every
+// scenario against it reports blind. Reporting clear here would be the
+// fail-open bug: the tool would be asserting health it never measured.
+func TestUnobservedTargetReportsBlindNotClear(t *testing.T) {
+	// The signal itself would read as healthy; only the probe is dark.
+	q := valueByQueryFunc(func(promql string) (float64, error) {
+		if promql == "probe-that-returns-nothing" {
+			return 0, prom.ErrNoData
+		}
+		return 0, nil
+	})
+	d := New([]catalog.Scenario{testScenario()},
+		[]Target{{CoverageProbe: "probe-that-returns-nothing", Params: map[string]string{}}},
+		q, func(context.Context, Incident) error { return nil })
+
+	cycle := d.Tick(context.Background(), time.Now())
+
+	if cycle.Observed != 0 || cycle.Unobserved != 1 {
+		t.Fatalf("observed=%d unobserved=%d, want 0 and 1", cycle.Observed, cycle.Unobserved)
+	}
+	if cycle.Healthy() {
+		t.Error("cycle reports healthy with an unobserved target; check --once would exit 0 while blind")
+	}
+	if cycle.Clear != 0 {
+		t.Errorf("clear = %d, want 0: a blind detector must not report health", cycle.Clear)
+	}
+	if cycle.Blind != 1 {
+		t.Fatalf("blind = %d, want 1", cycle.Blind)
+	}
+	if !strings.Contains(cycle.Evaluations[0].Reason, "unobserved") {
+		t.Errorf("reason = %q, want it to name the coverage failure", cycle.Evaluations[0].Reason)
+	}
+}
+
+// The critical subtlety: traffic-vanished-triage and the client-deploy family
+// behind it detect an incident whose entire symptom is that telemetry stopped.
+// Blind-detection must not suppress them. The coverage probe, not the scenario
+// query, is what separates "traffic stopped" from "we cannot see this target".
+func TestAbsenceIsSignalStillFiresWhenTheTargetIsVisible(t *testing.T) {
+	s := testScenario()
+	s.Signal.AbsenceIsSignal = true
+	s.Signal.Comparison = "<"
+	s.Signal.Threshold = 0.5 // an empty result is a zero, which is under it
+	s.Signal.For = ""
+
+	var fired []Incident
+	q := querierFunc(func(context.Context, string) (float64, error) { return 0, prom.ErrNoData })
+	d := New([]catalog.Scenario{s},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{}}},
+		q, func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil })
+
+	cycle := d.Tick(context.Background(), time.Now())
+
+	if len(fired) != 1 {
+		t.Fatalf("fired %d incidents, want 1: absence is this entry's signal", len(fired))
+	}
+	if cycle.Blind != 0 {
+		t.Errorf("blind = %d, want 0: an absence entry reading an empty result is measuring, not blind", cycle.Blind)
+	}
+}
+
+// Same entry, but the target is not visible at all. Now the empty result
+// proves nothing, and firing on it would be inventing an outage out of our
+// own blindness.
+func TestAbsenceIsSignalStaysQuietWhenTheTargetIsUnobserved(t *testing.T) {
+	s := testScenario()
+	s.Signal.AbsenceIsSignal = true
+	s.Signal.Comparison = "<"
+	s.Signal.Threshold = 0.5
+	s.Signal.For = ""
+
+	var fired []Incident
+	// Every query, probe included, comes back empty: the mesh is dark to us.
+	q := querierFunc(func(context.Context, string) (float64, error) { return 0, prom.ErrNoData })
+	d := New([]catalog.Scenario{s},
+		[]Target{{Params: map[string]string{"namespace": "demo"}}},
+		q, func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil })
+
+	cycle := d.Tick(context.Background(), time.Now())
+
+	if cycle.Unobserved != 1 {
+		t.Fatalf("unobserved = %d, want 1", cycle.Unobserved)
+	}
+	if len(fired) != 0 {
+		t.Errorf("fired %d incidents from a target it cannot see", len(fired))
+	}
+}
+
+// A breach measured while the target was visible must not mature into an
+// incident across a stretch of blindness: the hold duration is a claim about
+// what was observed, not about wall-clock time.
+func TestBlindnessClearsPendingProgress(t *testing.T) {
+	probeUp := true
+	q := valueByQueryFunc(func(promql string) (float64, error) {
+		if promql == testProbe {
+			if !probeUp {
+				return 0, prom.ErrNoData
+			}
+			return 1, nil
+		}
+		return 1, nil // always breaching
+	})
+	var fired []Incident
+	d := New([]catalog.Scenario{testScenario()},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{}}},
+		q, func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil })
+
+	base := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	d.Tick(context.Background(), base) // pending starts
+
+	probeUp = false
+	d.Tick(context.Background(), base.Add(30*time.Second)) // blind: progress cleared
+
+	probeUp = true
+	d.Tick(context.Background(), base.Add(70*time.Second)) // 70s > 60s hold, but the clock restarted
+	if len(fired) != 0 {
+		t.Fatalf("fired %d incidents, want 0: the hold duration ran through a blind stretch", len(fired))
+	}
+
+	d.Tick(context.Background(), base.Add(140*time.Second)) // 70s of continuous sight
+	if len(fired) != 1 {
+		t.Errorf("fired %d incidents, want 1 once the hold held while observable", len(fired))
+	}
+}
+
+// The audit's B-1: a restart re-opened every still-breaching incident, which
+// in GitOps mode is a second pull request for an incident already under
+// review. State persists, so the restarted process knows the incident is open.
+func TestPersistedStateSurvivesRestartWithoutRefiring(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	target := Target{CoverageProbe: testProbe, Params: map[string]string{"service": "payments"}}
+	newDetector := func(fired *[]Incident) *Detector {
+		q := querierFunc(func(context.Context, string) (float64, error) { return 1, nil })
+		d := New([]catalog.Scenario{testScenario()}, []Target{target}, q,
+			func(_ context.Context, inc Incident) error { *fired = append(*fired, inc); return nil })
+		d.StateFile = path
+		return d
+	}
+	base := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+
+	var firstRun []Incident
+	d1 := newDetector(&firstRun)
+	d1.Tick(context.Background(), base)
+	d1.Tick(context.Background(), base.Add(90*time.Second)) // holds past 60s, fires
+	if len(firstRun) != 1 {
+		t.Fatalf("first run fired %d incidents, want 1", len(firstRun))
+	}
+	if err := d1.SaveState(path); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	// A fresh process: same breach, still unresolved.
+	var secondRun []Incident
+	d2 := newDetector(&secondRun)
+	if err := d2.LoadState(path); err != nil {
+		t.Fatalf("LoadState: %v", err)
+	}
+	d2.Tick(context.Background(), base.Add(150*time.Second))
+	d2.Tick(context.Background(), base.Add(300*time.Second))
+	if len(secondRun) != 0 {
+		t.Errorf("restart re-opened %d incidents that were already open", len(secondRun))
+	}
+}
+
+// The state key must survive someone editing the config, not just restarting.
+// An index-based key silently reassigns every open incident to a different
+// target the moment a target is inserted above it.
+func TestPersistedStateSurvivesTargetReordering(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	payments := Target{CoverageProbe: testProbe, Params: map[string]string{"service": "payments"}}
+	ledger := Target{CoverageProbe: testProbe, Params: map[string]string{"service": "ledger"}}
+	base := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+
+	run := func(targets []Target, load bool) []Incident {
+		var fired []Incident
+		q := querierFunc(func(context.Context, string) (float64, error) { return 1, nil })
+		d := New([]catalog.Scenario{testScenario()}, targets, q,
+			func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil })
+		d.StateFile = path
+		if load {
+			if err := d.LoadState(path); err != nil {
+				t.Fatalf("LoadState: %v", err)
+			}
+		}
+		d.Tick(context.Background(), base)
+		d.Tick(context.Background(), base.Add(90*time.Second))
+		if err := d.SaveState(path); err != nil {
+			t.Fatalf("SaveState: %v", err)
+		}
+		return fired
+	}
+
+	if got := run([]Target{payments}, false); len(got) != 1 {
+		t.Fatalf("first run fired %d, want 1", len(got))
+	}
+	// ledger is inserted ahead of payments. payments' incident is still open.
+	got := run([]Target{ledger, payments}, true)
+	for _, inc := range got {
+		if inc.Params["service"] == "payments" {
+			t.Error("payments re-fired after a target was inserted above it in the config")
+		}
+	}
+	if len(got) != 1 || got[0].Params["service"] != "ledger" {
+		t.Errorf("want exactly the new ledger incident, got %d incidents", len(got))
+	}
+}
+
+// valueByQueryFunc is a fake whose answer depends on the query and on state
+// the test mutates between ticks.
+type valueByQueryFunc func(promql string) (float64, error)
+
+func (f valueByQueryFunc) Query(_ context.Context, promql string) (float64, error) {
+	return f(promql)
+}
+
+func (f valueByQueryFunc) QuerySeries(_ context.Context, promql string) ([]prom.Sample, error) {
+	v, err := f(promql)
+	if err != nil {
+		return nil, err
+	}
+	return []prom.Sample{{Value: v}}, nil
+}
+
+// The audit's B-2: every catalog entry declares a
+// maxAppliesPerHour, and until now nothing in the codebase read it. The
+// safety story promised a rate limit the code did not implement.
+func TestGuardrailLimitsAppliesPerHour(t *testing.T) {
+	s := testScenario()
+	s.Signal.For = ""
+	s.Guardrails.MaxAppliesPerHour = 2
+
+	clock := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	var fired []Incident
+	// A flapping signal: breaching, clear, breaching, clear... so each breach
+	// is a fresh episode that would deliver again without a guardrail.
+	breaching := true
+	q := valueByQueryFunc(func(promql string) (float64, error) {
+		if promql == testProbe {
+			return 1, nil
+		}
+		if breaching {
+			return 1, nil
+		}
+		return 0, nil
+	})
+	d := New([]catalog.Scenario{s},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{"service": "payments"}}},
+		q, func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil })
+	d.Now = func() time.Time { return clock }
+
+	flap := func() {
+		breaching = true
+		d.Tick(context.Background(), clock)
+		breaching = false
+		clock = clock.Add(time.Minute)
+		d.Tick(context.Background(), clock)
+		clock = clock.Add(time.Minute)
+	}
+	for i := 0; i < 5; i++ {
+		flap()
+	}
+	if len(fired) != 2 {
+		t.Fatalf("delivered %d incidents across 5 breach episodes, want 2: the guardrail is %d/hour",
+			len(fired), s.Guardrails.MaxAppliesPerHour)
+	}
+
+	// Once the rolling hour clears, the budget comes back.
+	clock = clock.Add(61 * time.Minute)
+	flap()
+	if len(fired) != 3 {
+		t.Errorf("delivered %d after the window cleared, want 3: the limit is per hour, not forever", len(fired))
+	}
+}
+
+// A guardrail you can get around by bouncing the process is not a guardrail.
+func TestGuardrailWindowSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s := testScenario()
+	s.Signal.For = ""
+	s.Guardrails.MaxAppliesPerHour = 1
+	target := Target{CoverageProbe: testProbe, Params: map[string]string{"service": "payments"}}
+
+	clock := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	breaching := true
+	q := valueByQueryFunc(func(promql string) (float64, error) {
+		if promql == testProbe || breaching {
+			return 1, nil
+		}
+		return 0, nil
+	})
+	run := func(fired *[]Incident) {
+		d := New([]catalog.Scenario{s}, []Target{target}, q,
+			func(_ context.Context, inc Incident) error { *fired = append(*fired, inc); return nil })
+		d.Now = func() time.Time { return clock }
+		d.StateFile = path
+		if err := d.LoadState(path); err != nil {
+			t.Fatalf("LoadState: %v", err)
+		}
+		breaching = true
+		d.Tick(context.Background(), clock)
+		breaching = false
+		clock = clock.Add(time.Minute)
+		d.Tick(context.Background(), clock)
+		clock = clock.Add(time.Minute)
+		if err := d.SaveState(path); err != nil {
+			t.Fatalf("SaveState: %v", err)
+		}
+	}
+
+	var first, second []Incident
+	run(&first)
+	if len(first) != 1 {
+		t.Fatalf("first process delivered %d, want 1", len(first))
+	}
+	run(&second)
+	if len(second) != 0 {
+		t.Errorf("a restart bought %d extra applies past a 1/hour guardrail", len(second))
+	}
+}
+
+// A blocked apply must not become a silent drop: a guardrail that hides what
+// it stopped is its own fail-open.
+func TestGuardrailSaysWhatItBlocked(t *testing.T) {
+	s := testScenario()
+	s.Signal.For = ""
+	s.Guardrails.MaxAppliesPerHour = 1
+
+	clock := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	var logged []string
+	breaching := true
+	q := valueByQueryFunc(func(promql string) (float64, error) {
+		if promql == testProbe || breaching {
+			return 1, nil
+		}
+		return 0, nil
+	})
+	d := New([]catalog.Scenario{s},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{}}},
+		q, func(context.Context, Incident) error { return nil })
+	d.Now = func() time.Time { return clock }
+	d.Log = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+
+	for i := 0; i < 2; i++ {
+		breaching = true
+		d.Tick(context.Background(), clock)
+		breaching = false
+		clock = clock.Add(time.Minute)
+		d.Tick(context.Background(), clock)
+		clock = clock.Add(time.Minute)
+	}
+
+	var found bool
+	for _, line := range logged {
+		if strings.Contains(line, "guardrail hit") && strings.Contains(line, "still breaching") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the guardrail blocked an apply without saying so; logged: %v", logged)
 	}
 }

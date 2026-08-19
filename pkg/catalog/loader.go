@@ -2,8 +2,9 @@ package catalog
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
-	"path/filepath"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -19,7 +20,15 @@ var validComparisons = map[string]bool{">": true, "<": true, ">=": true, "<=": t
 // and rejects duplicate IDs. Scenarios are returned sorted by ID so output
 // is stable.
 func LoadDir(dir string) ([]Scenario, error) {
-	entries, err := os.ReadDir(dir)
+	return LoadFS(os.DirFS(dir), ".")
+}
+
+// LoadFS is LoadDir over any filesystem, which is what lets the binary carry
+// its own reviewed catalog. A `go install` delivers an executable and nothing
+// else, so a catalog that only exists as a directory on disk makes the first
+// command a new user runs fail.
+func LoadFS(fsys fs.FS, dir string) ([]Scenario, error) {
+	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
 		return nil, fmt.Errorf("reading catalog dir: %w", err)
 	}
@@ -30,7 +39,7 @@ func LoadDir(dir string) ([]Scenario, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		data, err := fs.ReadFile(fsys, path.Join(dir, e.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", e.Name(), err)
 		}

@@ -1,0 +1,118 @@
+version: 2
+
+project_name: meshmedic
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+    # A release whose catalog does not load is worse than no release.
+    - go run ./cmd/meshmedic validate
+
+builds:
+  - id: meshmedic
+    main: ./cmd/meshmedic
+    binary: meshmedic
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+  # The prover injects faults into a cluster, so it ships as its own artifact
+  # and never inside the detector's archive or image. Two claims are in tension
+  # here and both matter. The detector's is that it holds no cluster write
+  # credentials, which is why a fault-injection binary has no business in an
+  # image that runs continuously inside someone's mesh: a compromised pod would
+  # hand an attacker a ready-made tool. The benchmark's claim is
+  # reproducibility, and proofs only a maintainer can run are unfalsifiable,
+  # which is the opposite of what this project argues for. A separately named
+  # download serves both: anyone can reproduce the proofs, nobody gets fault
+  # injection by accident.
+  - id: meshmedic-prove
+    main: ./cmd/meshmedic-prove
+    binary: meshmedic-prove
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  # The catalog travels with the binary. It is the reviewable artifact the
+  # engine reads at startup, so a binary shipped without it is not runnable.
+  - id: meshmedic
+    ids: [meshmedic]
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - catalog/*.yaml
+      # Without the lock every entry is unlocked and the binary detects
+      # nothing; the two ship together or not at all.
+      - catalog.lock
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+
+  # Separately named so downloading it is a deliberate act, and carrying the
+  # proof specs because the binary without them proves nothing.
+  - id: meshmedic-prove
+    ids: [meshmedic-prove]
+    formats: [tar.gz]
+    name_template: "meshmedic-prove_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - proof/*.yaml
+      - catalog/*.yaml
+      - catalog.lock
+      - docs/calibration.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  prerelease: auto
+  footer: |
+    ## meshmedic-prove is a separate download, on purpose
+
+    `meshmedic-prove` **injects faults into a live cluster**. It exists so that
+    anyone can reproduce the end-to-end evidence for a catalog entry rather than
+    taking the maintainer's word for it. It is not part of the detector: it is
+    absent from the `meshmedic` archive and from the container image, because
+    the detector holds no cluster write credentials and nothing that runs
+    continuously inside a mesh should carry a fault-injection tool.
+
+    Run it against a testbed. Never against anything you care about.
+
+    ## Quickest way in
+
+    Against a Prometheus you already run, no config file and no testbed:
+
+    ```console
+    $ docker run --rm --network host ghcr.io/kassvl/meshmedic:{{ .Tag }} \
+        watch --prometheus http://localhost:9090 \
+              --target service=payments,namespace=demo
+    ```

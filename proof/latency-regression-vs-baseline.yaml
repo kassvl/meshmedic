@@ -1,0 +1,48 @@
+entry: latency-regression-vs-baseline
+summary: >
+  A baseline is warmed against healthy traffic first, then a 350ms regression
+  is injected on the canary only, which is the entry's whole reason to exist:
+  the result is abnormal for this cluster and invisible to any fixed SLO, so a
+  relative threshold catches what a static 1000ms number would miss entirely.
+
+  The fault goes on the stable subset, not the canary, and that is the design
+  rather than an accident. canary-latency-rollback keys on
+  destination_version=v2 while this entry reads the service as a whole, so
+  slowing v1 moves this signal and leaves the canary's untouched. There is then
+  no ceiling to work under, because the entry that would suppress this one
+  cannot come into breach at all.
+
+  It also makes the fault effective instead of marginal. v1 carries 80 percent
+  of traffic, so a regression there lifts the service p99 directly, while the
+  same regression on the 20 percent canary barely reaches the threshold: two
+  runs sized against the canary produced 486ms against a 509.7ms threshold and
+  then failed again against a 625.3ms one, because the learned normal itself
+  moved 169.9 to 208.4 between windows. Chasing that number was the wrong
+  answer; moving the fault to where the traffic is was the right one.
+target:
+  service: payments
+  namespace: demo
+  workload: payments-v2
+  subset: v2
+  stable_subset: v1
+# Long enough to pass the entry's baselineMinSamples at the default poll, so
+# the detector trusts the learned normal instead of falling back to 1000ms.
+warmup: 5m
+inject:
+  - desc: slow the stable subset, which carries most of the traffic
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v1, TIMING_50_PERCENTILE=500ms]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v1, --timeout=180s]
+reset:
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v1, TIMING_50_PERCENTILE=20ms]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v1, --timeout=180s]
+settle: 90s
+firesWithin: 6m
+resolvesWithin: 6m
+expect:
+  names:
+    - payments
+  # The point of firing below the static threshold: canary-latency-rollback
+  # needs 1000ms and must stay quiet, which is also what keeps its suppression
+  # of this entry from hiding the very thing being proven.
+  quiet:
+    - canary-latency-rollback

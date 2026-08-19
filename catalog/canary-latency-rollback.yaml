@@ -70,3 +70,11 @@ rollback: >
   Restore the previous VirtualService weights once the canary's p99 is back
   under the threshold in a staging replay, or roll forward with a fixed canary
   image. The PR that shifted traffic contains the prior weights in its diff.
+
+# Found by the end-to-end proof: injecting canary latency fires this entry and
+# latency-regression-vs-baseline together. Both readings are true, the service
+# really is slow, but only one of them is actionable. This entry names the
+# canary and proposes shifting traffic to stable; the baseline entry restates
+# the symptom that this one has already explained. One incident, not two.
+suppresses:
+  - latency-regression-vs-baseline

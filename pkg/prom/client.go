@@ -113,3 +113,49 @@ func (c *Client) instant(ctx context.Context, promql string) ([]Sample, error) {
 	}
 	return samples, nil
 }
+
+// MetricNames lists every metric name the server currently knows about.
+// It is what makes a catalog entry checkable before an incident: a signal
+// naming a metric that is not here can never fire, and the coverage is lost
+// silently rather than loudly.
+func (c *Client) MetricNames(ctx context.Context) (map[string]bool, error) {
+	return c.labelValues(ctx, "/api/v1/label/__name__/values")
+}
+
+// LabelNames lists every label key the server currently knows about. Istio
+// renames labels between versions, and a matcher on a label that no longer
+// exists matches nothing at all rather than erroring.
+func (c *Client) LabelNames(ctx context.Context) (map[string]bool, error) {
+	return c.labelValues(ctx, "/api/v1/labels")
+}
+
+// labelValues fetches one of Prometheus's string-list endpoints.
+func (c *Client) labelValues(ctx context.Context, path string) (map[string]bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("prometheus: %s: %s", path, resp.Status)
+	}
+	var body struct {
+		Status string   `json:"status"`
+		Data   []string `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("prometheus: decoding %s: %w", path, err)
+	}
+	if body.Status != "success" {
+		return nil, fmt.Errorf("prometheus: %s: response status %q", path, body.Status)
+	}
+	out := make(map[string]bool, len(body.Data))
+	for _, v := range body.Data {
+		out[v] = true
+	}
+	return out, nil
+}

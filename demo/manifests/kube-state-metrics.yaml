@@ -1,0 +1,129 @@
+# kube-state-metrics for the testbed.
+#
+# A whole family of real failure classes has no mesh signal at all: OOM kills,
+# a bad image tag, a misconfigured readiness probe, a ConfigMap that breaks
+# startup, a crash-looping ztunnel. Their symptom is pod state, and the stock
+# Istio Prometheus addon does not scrape it, so those classes were deferred
+# with a documented finding rather than validated. This closes that gap in one
+# move, and is also what waypoint-overload-scale needs to be checkable at all.
+#
+# The pod carries the addon's own scrape annotations, so it is picked up by the
+# existing `kubernetes-pods` job. No surgery on the Prometheus ConfigMap, which
+# means this stays additive and a `kubectl delete -f` puts the testbed back
+# exactly as it was.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-state-metrics
+  namespace: istio-system
+---
+# Read-only across the resources whose state the deferred classes need. It is
+# deliberately narrower than the upstream default: no secrets, no
+# certificates, nothing the testbed does not read.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kube-state-metrics
+rules:
+  - apiGroups: [""]
+    resources: [pods, nodes, services, endpoints, replicationcontrollers, resourcequotas, namespaces, configmaps]
+    verbs: [list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, daemonsets, replicasets, statefulsets]
+    verbs: [list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [list, watch]
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: [list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-state-metrics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kube-state-metrics
+subjects:
+  - kind: ServiceAccount
+    name: kube-state-metrics
+    namespace: istio-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-state-metrics
+  namespace: istio-system
+  labels:
+    app: kube-state-metrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kube-state-metrics
+  template:
+    metadata:
+      labels:
+        app: kube-state-metrics
+      annotations:
+        # This is what gets it scraped: the Istio addon's Prometheus already
+        # discovers annotated pods.
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: /metrics
+        # kube-state-metrics is an observer of the cluster, not a mesh
+        # participant. Keeping it out of the dataplane means it cannot
+        # perturb the very telemetry the benchmark measures.
+        sidecar.istio.io/inject: "false"
+    spec:
+      serviceAccountName: kube-state-metrics
+      containers:
+        - name: kube-state-metrics
+          image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0
+          args:
+            - --resources=pods,deployments,replicasets,daemonsets,statefulsets,nodes,services,namespaces,configmaps,jobs,cronjobs,horizontalpodautoscalers,resourcequotas,endpoints,replicationcontrollers
+          ports:
+            - name: http-metrics
+              containerPort: 8080
+            - name: telemetry
+              containerPort: 8081
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8081
+            initialDelaySeconds: 5
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 10m
+              memory: 64Mi
+            limits:
+              memory: 192Mi
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-state-metrics
+  namespace: istio-system
+  labels:
+    app: kube-state-metrics
+spec:
+  clusterIP: None
+  selector:
+    app: kube-state-metrics
+  ports:
+    - name: http-metrics
+      port: 8080
+      targetPort: http-metrics
+    - name: telemetry
+      port: 8081
+      targetPort: telemetry

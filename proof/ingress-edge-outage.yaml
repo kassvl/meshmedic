@@ -1,0 +1,24 @@
+entry: ingress-edge-outage
+summary: >
+  The ingress HTTPRoute is pointed at a port nothing listens on, so users get
+  5xx at the front door while every service behind it is healthy. The class
+  where the failing party and the failing symptom are on opposite sides of the
+  gateway.
+target:
+  service: payments
+  namespace: demo
+  workload: payments-v2
+  subset: v2
+  stable_subset: v1
+  ingress_workload: ingress-istio
+inject:
+  - desc: point the ingress route at a dead port
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, patch, httproute, payments-ingress, --type=json, -p, '[{"op":"replace","path":"/spec/rules/0/backendRefs/0/port","value":9999}]']
+reset:
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, patch, httproute, payments-ingress, --type=json, -p, '[{"op":"replace","path":"/spec/rules/0/backendRefs/0/port","value":9090}]']
+settle: 90s
+firesWithin: 6m
+resolvesWithin: 6m
+expect:
+  names:
+    - ingress-istio

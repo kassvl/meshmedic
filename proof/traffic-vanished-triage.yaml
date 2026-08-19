@@ -1,0 +1,26 @@
+entry: traffic-vanished-triage
+summary: >
+  The client is repointed at a host that does not resolve, so payments' traffic
+  stops entirely. The failure class no threshold-on-presence detector can see:
+  a total outage whose only mesh symptom is the absence of telemetry.
+target:
+  service: payments
+  namespace: demo
+  workload: payments-v2
+  subset: v2
+  stable_subset: v1
+inject:
+  - desc: repoint the client at a non-resolving host
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, patch, deployment, loadgen, --type=strategic, -p, '{"spec":{"template":{"spec":{"containers":[{"name":"loadgen","args":["while true; do curl -sS -m 2 -o /dev/null http://payments-svc.demo:9090/; sleep 0.2; done"]}]}}}}']
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/loadgen, --timeout=180s]
+reset:
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, patch, deployment, loadgen, --type=strategic, -p, '{"spec":{"template":{"spec":{"containers":[{"name":"loadgen","args":["while true; do curl -s -o /dev/null http://payments:9090/; sleep 0.2; done"]}]}}}}']
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/loadgen, --timeout=180s]
+settle: 2m
+firesWithin: 8m
+expect:
+  # The dossier has to carry the client's own failure line and the rollout that
+  # caused it. Detecting the absence without either is half an answer.
+  names:
+    - loadgen
+    - payments-svc

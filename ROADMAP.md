@@ -97,6 +97,42 @@ the testbed (`demo/baseline-relative/`, `demo/f9-recorder/`).
 **M2.8 is done**: an incident opened and closed on the testbed with
 `resolved after 3m15s` (`demo/closed-loop/`), unit-tested on all three edges.
 
+## M2.9: make the guardrails real, and prove every entry
+
+The catalog's safety story was partly documentation. All entries declared an
+hourly apply limit that no code read, `catalog/` was both the editable surface
+and the enforced artifact so nothing established that the entry running was the
+entry reviewed, and an empty Prometheus was indistinguishable from a healthy
+one.
+
+- [x] Four-state evaluation: `firing`, `clear`, `blind`, `unlocked`. An empty
+  result, a zero, and a query error stay three distinct facts to the report. A
+  per-target coverage probe each cycle, so silence is only ever reported as an
+  answer when the tool can prove it was looking. `meshmedic check` exits
+  non-zero when any target is unobserved
+- [x] `catalog.lock` and `meshmedic approve`: a content hash per entry with the
+  Istio version and testbed commit it was validated against. Edit an entry and
+  it stops running until re-approved. Removing one fails CI until the approval
+  is retired with a record in `catalog/RETIRED.md`
+- [x] `maxAppliesPerHour` enforced, with the window persisted so a restart
+  cannot buy extra applies
+- [x] `validate --against-prometheus`: does each entry's metrics and labels
+  exist on this server, and does its selector resolve to anything
+- [x] `meshmedic calibrate`: is each threshold right for **this** cluster.
+  Measures headroom rather than silence, because an entry sitting just under
+  its threshold is quiet today and pages next Tuesday (`docs/calibration.md`)
+- [x] End-to-end proof per entry: inject the fault on a live mesh, watch a real
+  detector, assert it fires inside its hold duration, names the culprit, keeps
+  its declared neighbours quiet, and clears on reset (`demo/proof-reports/`)
+- [x] Distribution: container image, release binaries, and the catalog compiled
+  into the binary so a single file is the whole tool
+
+**M2.9 is done**: 16 entries proven end to end on a live cluster, 2 declared
+unprovable with the measurement behind each, 0 silently unverified. The gates
+found what the code review had not: an entry that fires on a healthy cluster, a
+missing suppression that made one fault look like two incidents, and an entry
+that had never fired anywhere, which was measured, explained, and retired.
+
 ## M3: prove and present the system
 
 - Architecture-proof experiment: the same model fed a MeshMedic dossier in one

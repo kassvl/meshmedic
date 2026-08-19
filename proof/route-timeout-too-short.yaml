@@ -1,0 +1,26 @@
+entry: route-timeout-too-short
+summary: >
+  The VirtualService route timeout is set to 10ms, below any real backend
+  latency, so every request is cut short by the proxy and stamped UT. The
+  classic authoring gotcha: a valid configuration that is wrong.
+target:
+  service: payments
+  namespace: demo
+  workload: payments-v2
+  subset: v2
+  stable_subset: v1
+inject:
+  - desc: set an impossible route timeout
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, patch, virtualservice, payments, --type=merge, -p, '{"spec":{"http":[{"timeout":"0.01s","route":[{"destination":{"host":"payments","subset":"v1"},"weight":80},{"destination":{"host":"payments","subset":"v2"},"weight":20}]}]}}']
+reset:
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, patch, virtualservice, payments, --type=merge, -p, '{"spec":{"http":[{"route":[{"destination":{"host":"payments","subset":"v1"},"weight":80},{"destination":{"host":"payments","subset":"v2"},"weight":20}]}]}}']
+settle: 90s
+firesWithin: 6m
+resolvesWithin: 6m
+expect:
+  names:
+    - payments
+  # A UT flood also inflates the 5xx ratio. The entry declares the suppression
+  # so an operator is not told to eject endpoints for a timeout they set.
+  quiet:
+    - error-surge-outlier-ejection

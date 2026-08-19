@@ -1,0 +1,31 @@
+entry: upstream-dependency-errors
+summary: >
+  The downstream ledger service fails 80 percent of calls, so payments returns
+  errors that are not its own. This is the class the entry exists for: the
+  service an operator would page is healthy, and the fault is one hop away.
+target:
+  service: payments
+  namespace: demo
+  workload: payments-v2
+  subset: v2
+  stable_subset: v1
+inject:
+  - desc: make the downstream ledger fail
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/ledger, ERROR_RATE=0.8]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/ledger, --timeout=180s]
+reset:
+  - desc: restore the ledger
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/ledger, ERROR_RATE=0]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/ledger, --timeout=180s]
+settle: 90s
+firesWithin: 5m
+resolvesWithin: 5m
+expect:
+  # Naming the dependency is the entire value of this entry. Without it the
+  # operator ejects endpoints of a service that is working correctly.
+  names:
+    - ledger
+  # The whole point of the suppression: payments' own 5xx ratio is elevated,
+  # so error-surge would fire and blame the healthy front service.
+  quiet:
+    - error-surge-outlier-ejection

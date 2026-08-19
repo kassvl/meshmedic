@@ -1,0 +1,22 @@
+entry: authz-deny-flood
+summary: >
+  An AuthorizationPolicy DENY that turns out to cover the caller the service
+  depends on. The ordinary shape of this incident: a policy written to lock
+  something down, broader than its author believed.
+target:
+  service: payments
+  namespace: demo
+  workload: payments-v2
+  subset: v2
+  stable_subset: v1
+inject:
+  - desc: deny the demo namespace's own caller
+    run: [kubectl, --context=kind-meshmedic-demo, apply, -f, demo/manifests/authz-deny-fault.yaml]
+reset:
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, delete, authorizationpolicy, payments-block-loadgen, --ignore-not-found]
+settle: 90s
+firesWithin: 6m
+resolvesWithin: 6m
+expect:
+  names:
+    - loadgen

@@ -1,0 +1,28 @@
+# Fault, not part of the healthy testbed. STRICT mTLS for the namespace plus a
+# plaintext client that is not in the mesh. In ambient mode the denial happens
+# at L4 in ztunnel and never becomes an HTTP request, which is why this class
+# needs istio_tcp_connections_closed_total rather than request metrics.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: demo-strict
+  namespace: demo
+spec:
+  mtls:
+    mode: STRICT
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: plain-client
+  namespace: default
+  labels:
+    app: plain-client
+spec:
+  restartPolicy: Never
+  containers:
+    - name: curl
+      image: curlimages/curl:8.11.1
+      command: ["sh", "-c"]
+      args:
+        - while true; do curl -s -m 2 -o /dev/null http://payments.demo:9090/ || true; sleep 1; done
