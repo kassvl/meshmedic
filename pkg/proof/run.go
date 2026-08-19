@@ -39,7 +39,9 @@ type Result struct {
 // Runner executes proofs against a live cluster.
 type Runner struct {
 	scenarios []catalog.Scenario
-	prom      detect.Querier
+	// prom is the querier; exported through the constructor and overridable in
+	// tests that need to change the cluster mid-proof.
+	prom detect.Querier
 	// Exec runs an injection or reset command. Injected so tests can prove
 	// the runner's logic without touching a cluster.
 	Exec func(ctx context.Context, argv []string) error
@@ -51,6 +53,10 @@ type Runner struct {
 	Poll time.Duration
 	// Sleep waits, injected so tests do not.
 	Sleep func(context.Context, time.Duration)
+
+	// onIncident is swapped between the firing and resolving phases so both
+	// can share one detector, and therefore one state machine.
+	onIncident func(detect.Incident)
 }
 
 // NewRunner builds a runner with real command execution and a real clock.
@@ -123,7 +129,15 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 		r.Sleep(ctx, s.Settle.D())
 	}
 
-	fired, others, doc, after := r.waitForFire(ctx, s)
+	// One detector for the whole proof. A resolution report is only emitted on
+	// the firing-to-clear edge, so a second detector built for the resolution
+	// phase starts with an empty state machine, never sees the incident open,
+	// and can never see it close. Two entries passed anyway, by accident: with
+	// a 60s hold their fault outlived the reset long enough for the fresh
+	// detector to fire and then clear on its own. error-surge's 120s hold did
+	// not, and the proof blamed the entry for the prover's mistake.
+	d := r.detectorFor(s)
+	fired, others, doc, after := r.waitForFire(ctx, d, s)
 	res.Fired = fired
 	res.FiredAfter = after
 	res.Report = doc
@@ -185,7 +199,7 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 				return res
 			}
 		}
-		resolved, rAfter := r.waitForResolve(ctx, s)
+		resolved, rAfter := r.waitForResolve(ctx, d, s)
 		res.Resolved = resolved
 		res.ResolveAfter = rAfter
 		if !resolved {
@@ -203,12 +217,12 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 
 // waitForFire ticks a detector until the subject fires or the budget runs out,
 // collecting which other entries fired along the way.
-func (r *Runner) waitForFire(ctx context.Context, s Spec) (fired bool, others []string, doc string, after time.Duration) {
+func (r *Runner) waitForFire(ctx context.Context, d *detect.Detector, s Spec) (fired bool, others []string, doc string, after time.Duration) {
 	seen := map[string]bool{}
 	start := r.Now()
 	deadline := start.Add(s.FiresWithin.D())
 
-	d := r.detector(s, func(inc detect.Incident) {
+	r.onIncident = func(inc detect.Incident) {
 		if inc.Scenario.ID == s.Entry && doc == "" {
 			patch, err := remediate.Render(inc.Scenario, inc.Params)
 			if err != nil {
@@ -222,7 +236,7 @@ func (r *Runner) waitForFire(ctx context.Context, s Spec) (fired bool, others []
 		if inc.Scenario.ID != s.Entry && !seen[inc.Scenario.ID] {
 			seen[inc.Scenario.ID] = true
 		}
-	})
+	}
 
 	for r.Now().Before(deadline) {
 		d.Tick(ctx, r.Now())
@@ -253,21 +267,20 @@ func (r *Runner) waitForFire(ctx context.Context, s Spec) (fired bool, others []
 }
 
 // waitForResolve ticks until the subject emits a resolution.
-func (r *Runner) waitForResolve(ctx context.Context, s Spec) (bool, time.Duration) {
+func (r *Runner) waitForResolve(ctx context.Context, d *detect.Detector, s Spec) (bool, time.Duration) {
 	start := r.Now()
 	deadline := start.Add(s.ResolvesWithin.D())
 	resolved := false
 
-	d := r.detector(s, func(detect.Incident) {})
+	// Same detector, so the incident this proof just watched open is the one
+	// it now watches close.
+	r.onIncident = func(detect.Incident) {}
 	d.OnResolve = func(_ context.Context, res detect.Resolution) error {
 		if res.Scenario.ID == s.Entry {
 			resolved = true
 		}
 		return nil
 	}
-	// The detector must believe the incident is already open, or there is no
-	// firing-to-clear edge to resolve. Tick once with the fault still
-	// registering, then wait it out.
 	for r.Now().Before(deadline) && ctx.Err() == nil {
 		d.Tick(ctx, r.Now())
 		if resolved {
@@ -278,14 +291,17 @@ func (r *Runner) waitForResolve(ctx context.Context, s Spec) (bool, time.Duratio
 	return false, r.Now().Sub(start)
 }
 
-// detector builds a detector wired to the proof's target and a handler that
-// forwards every incident to onIncident.
-func (r *Runner) detector(s Spec, onIncident func(detect.Incident)) *detect.Detector {
+// detectorFor builds the single detector a proof uses for both phases. Its
+// handler forwards to whatever r.onIncident currently is, which lets the two
+// phases install different behaviour without replacing the state machine.
+func (r *Runner) detectorFor(s Spec) *detect.Detector {
 	d := detect.New(r.scenarios,
 		[]detect.Target{{Params: s.Target}},
 		r.prom,
 		func(_ context.Context, inc detect.Incident) error {
-			onIncident(inc)
+			if r.onIncident != nil {
+				r.onIncident(inc)
+			}
 			return nil
 		})
 	d.Log = func(string, ...any) {}

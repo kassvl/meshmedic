@@ -3,12 +3,22 @@
 // and asserts that the entry fired, named the culprit, kept its neighbours
 // quiet, and cleared on reset.
 //
-// It is a separate binary from meshmedic on purpose. The tool's central claim
-// is that it holds no cluster write credentials and mutates nothing; a
-// subcommand that runs `kubectl apply` would undermine that at the level of
-// perception even though the detection path is untouched. This binary is
-// excluded from the release archives and the container image. It exists to be
-// run by a maintainer against a testbed, never in production.
+// It is a separate binary, and ships as its own separately named release
+// artifact, because two claims are in tension and both matter.
+//
+// The detector's claim is that it holds no cluster write credentials. Nothing
+// that runs continuously inside someone's mesh should carry a fault-injection
+// tool: a compromised pod would hand an attacker a ready-made one. So this is
+// absent from the meshmedic archive and from the container image.
+//
+// The benchmark's claim is reproducibility, and proofs only a maintainer can
+// run are unfalsifiable, which is the opposite of what this project argues
+// for. So it is downloadable, by name, with what it does written on it.
+//
+// A separate, clearly-labelled artifact serves both: anyone can reproduce the
+// evidence, and nobody gets fault injection by accident. It refuses to run
+// without an explicit acknowledgement, after printing every command it is
+// about to run against the cluster.
 package main
 
 import (
@@ -36,6 +46,7 @@ func main() {
 	only := fs.String("entry", "", "prove one entry instead of all of them")
 	list := fs.Bool("list", false, "list the entries that have a proof, and those that do not")
 	outDir := fs.String("out", "", "write each incident report under this directory")
+	yes := fs.Bool("yes-inject-faults", false, "acknowledge that this mutates the cluster it is pointed at")
 	fs.Parse(os.Args[1:])
 
 	scenarios, err := catalog.LoadDir(*catalogDir)
@@ -81,6 +92,14 @@ func main() {
 		specs = filtered
 	}
 
+	// Print exactly what is about to be done to the cluster, then require an
+	// acknowledgement. A tool that mutates a mesh should never do it because
+	// someone pasted a command without reading it, and the list below is the
+	// difference between an informed act and an accident.
+	if !confirmed(specs, *yes) {
+		os.Exit(2)
+	}
+
 	logger := log.New(os.Stderr, "prove: ", log.LstdFlags)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -114,6 +133,30 @@ func main() {
 	}
 
 	os.Exit(summarize(results, scenarios, specs))
+}
+
+// confirmed prints every command that will be run against the cluster and
+// returns whether the operator has acknowledged it.
+func confirmed(specs []proof.Spec, acknowledged bool) bool {
+	fmt.Fprintln(os.Stderr, "meshmedic-prove INJECTS FAULTS into the cluster it is pointed at.")
+	fmt.Fprintf(os.Stderr, "It will run the following against %d entries:\n\n", len(specs))
+	for _, sp := range specs {
+		fmt.Fprintf(os.Stderr, "  %s\n", sp.Entry)
+		for _, c := range sp.Inject {
+			fmt.Fprintf(os.Stderr, "    inject  %s\n", strings.Join(c.Run, " "))
+		}
+		for _, c := range sp.Reset {
+			fmt.Fprintf(os.Stderr, "    reset   %s\n", strings.Join(c.Run, " "))
+		}
+	}
+	fmt.Fprintln(os.Stderr, "\nEvery proof resets what it injected, including on failure and on interrupt.")
+	fmt.Fprintln(os.Stderr, "Point this at a testbed. Never at anything you care about.")
+	if acknowledged {
+		fmt.Fprintln(os.Stderr, "\n--yes-inject-faults given, proceeding.")
+		return true
+	}
+	fmt.Fprintln(os.Stderr, "\nRefusing to run without --yes-inject-faults.")
+	return false
 }
 
 func writeReport(dir, entry, doc string, logger *log.Logger) {

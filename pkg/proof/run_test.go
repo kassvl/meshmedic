@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kassvl/meshmedic/pkg/catalog"
+	"github.com/kassvl/meshmedic/pkg/detect"
 	"github.com/kassvl/meshmedic/pkg/prom"
 )
 
@@ -63,7 +64,11 @@ func harness(t *testing.T, scenarios []catalog.Scenario, p *fakeProm) (*Runner, 
 	t.Helper()
 	now := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
 	var ran []string
-	r := NewRunner(scenarios, p)
+	var q detect.Querier
+	if p != nil {
+		q = p
+	}
+	r := NewRunner(scenarios, q)
 	r.Now = func() time.Time { return now }
 	r.Sleep = func(_ context.Context, d time.Duration) { now = now.Add(d) }
 	r.Poll = 10 * time.Second
@@ -376,4 +381,71 @@ func TestFailedResetFailsTheProof(t *testing.T) {
 	if !strings.Contains(strings.Join(res.Failures, " "), "RESET FAILED") {
 		t.Errorf("failures = %v, want the reset failure recorded", res.Failures)
 	}
+}
+
+// The bug a live run found: the resolution half used a second detector, which
+// starts with an empty state machine. A resolution is only emitted on the
+// firing-to-clear edge, so a detector that never saw the incident open can
+// never see it close, and the proof blamed the entry for the prover's mistake.
+//
+// It hid because two entries passed anyway. With a short hold duration their
+// fault outlived the reset long enough for the fresh detector to fire and then
+// clear on its own. This fixture uses a long hold, where it cannot.
+func TestResolutionUsesTheDetectorThatSawTheIncidentOpen(t *testing.T) {
+	breaching := true
+	p := &fakePromFunc{fn: func(promql string) (float64, error) {
+		if strings.HasPrefix(promql, "count(") {
+			return 1, nil
+		}
+		if breaching {
+			return 5, nil
+		}
+		return 0, nil
+	}}
+
+	s := scenario("subject", 1)
+	s.Signal.For = "120s" // long enough that a fresh detector cannot re-fire
+	r, _ := harness(t, []catalog.Scenario{s}, nil)
+	r.prom = p
+
+	spec := baseSpec()
+	spec.FiresWithin = Duration(6 * time.Minute)
+	spec.ResolvesWithin = Duration(6 * time.Minute)
+	spec.Expect.Names = []string{"payments"}
+	// Reset clears the signal the moment it runs, exactly as a real reset does.
+	r.Exec = func(_ context.Context, argv []string) error {
+		if argv[0] == "reset" {
+			breaching = false
+		}
+		return nil
+	}
+
+	res := r.Run(context.Background(), spec)
+
+	if !res.Fired {
+		t.Fatalf("entry did not fire: %v", res.Failures)
+	}
+	if !res.Resolved {
+		t.Fatalf("incident opened but never closed: %v\n"+
+			"a second detector cannot observe a lifecycle the first one started", res.Failures)
+	}
+	if !res.Passed {
+		t.Errorf("proof failed: %v", res.Failures)
+	}
+}
+
+// fakePromFunc drives every query through one function, so a test can flip the
+// cluster from broken to healthy mid-proof.
+type fakePromFunc struct{ fn func(string) (float64, error) }
+
+func (f *fakePromFunc) Query(_ context.Context, promql string) (float64, error) {
+	return f.fn(promql)
+}
+
+func (f *fakePromFunc) QuerySeries(_ context.Context, promql string) ([]prom.Sample, error) {
+	v, err := f.fn(promql)
+	if err != nil {
+		return nil, err
+	}
+	return []prom.Sample{{Labels: map[string]string{"destination_workload": "payments-v2"}, Value: v}}, nil
 }
