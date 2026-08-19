@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -29,7 +30,15 @@ const (
 	checkOK            checkStatus = "ok"
 	checkMetricMissing checkStatus = "metric missing"
 	checkLabelMissing  checkStatus = "label missing"
-	checkUnparseable   checkStatus = "query unparseable"
+	// checkNoSeries is the subtler failure, and the one that only shows up
+	// against a real cluster: every name the query references exists, and the
+	// selector still matches nothing. retry-storm-damping is the live
+	// example. envoy_cluster_upstream_rq_retry is present with 5 series, all
+	// of them cluster_name="xds-grpc" (a proxy's own connection to istiod),
+	// so the entry's outbound-cluster selector matches nothing and the entry
+	// can never fire. A name-level check calls that healthy.
+	checkNoSeries    checkStatus = "selector matches nothing"
+	checkUnparseable checkStatus = "query unparseable"
 )
 
 type checkResult struct {
@@ -52,6 +61,7 @@ var checkParams = map[string]string{
 func runAgainstPrometheus(scenarios []catalog.Scenario, promURL string, params map[string]string, strict bool) {
 	client := prom.NewClient(promURL)
 	ctx := context.Background()
+	_ = ctx
 
 	metrics, err := client.MetricNames(ctx)
 	if err != nil {
@@ -78,7 +88,14 @@ func runAgainstPrometheus(scenarios []catalog.Scenario, promURL string, params m
 
 	results := make([]checkResult, 0, len(scenarios))
 	for _, s := range scenarios {
-		results = append(results, checkScenario(s, merged, metrics, labels))
+		r := checkScenario(s, merged, metrics, labels)
+		// Names existing is necessary but not sufficient. Only run the
+		// selector check when the names are fine, so the report names the
+		// first reason a query is dead rather than the last.
+		if r.Status == checkOK {
+			r = checkSeries(ctx, client, s, merged, r)
+		}
+		results = append(results, r)
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
@@ -153,6 +170,96 @@ func checkScenario(s catalog.Scenario, params map[string]string, metrics, labels
 		r.Missing = missingLabels
 	}
 	return r
+}
+
+// checkSeries asks whether the entry's metric carries any series for this
+// target at all, which is a different question from whether the entry is
+// firing right now.
+//
+// The distinction matters and only surfaces against a real cluster. On a
+// healthy mesh almost every entry's full signal returns nothing, because the
+// failure it looks for is not happening: authz-deny-flood selects
+// response_code="403" and a healthy service emits none. That is the cluster
+// being well, not the entry being broken. Meanwhile retry-storm-damping
+// selects envoy_cluster_upstream_rq_retry for an outbound cluster, and while
+// that metric does exist, every one of its series is cluster_name="xds-grpc",
+// a proxy's own connection to istiod. It matches nothing and never will.
+//
+// The two are told apart by keeping only the matchers whose values came from
+// the target's own parameters, and dropping the ones that describe a failure.
+// What is left must resolve on a healthy cluster; if it does not, the entry
+// is structurally dead for this target.
+func checkSeries(ctx context.Context, client *prom.Client, s catalog.Scenario, params map[string]string, r checkResult) checkResult {
+	if s.Signal.AbsenceIsSignal {
+		return r
+	}
+	query, err := renderForCheck(s.ID+"/series", s.Signal.PromQL, params)
+	if err != nil {
+		return r
+	}
+	refs, err := promql.Extract(query)
+	if err != nil || len(refs.Metrics) == 0 {
+		return r
+	}
+
+	paramValues := map[string]bool{}
+	for _, v := range params {
+		if v != "" {
+			paramValues[v] = true
+		}
+	}
+
+	for _, metric := range refs.Metrics {
+		probe := targetProbe(metric, refs.Matchers, paramValues)
+		samples, err := client.QuerySeries(ctx, probe)
+		if errors.Is(err, prom.ErrNoData) || (err == nil && len(samples) == 0) {
+			r.Status = checkNoSeries
+			r.Missing = []string{fmt.Sprintf("%s carries no series for %s", metric, describeTarget(params))}
+			return r
+		}
+	}
+	return r
+}
+
+// identifiesTarget reports whether a matcher names the target rather than the
+// failure. An equality matcher does when its value is one of the target's
+// parameters. A regex matcher does when it was built from them: the retry
+// entry selects cluster_name=~"outbound\\|.*\\|payments\\.demo\\..*", which
+// is neither equal to a parameter nor a failure condition, and dropping it
+// would leave a probe so broad that the entry looks healthy on the strength
+// of a proxy's own xds-grpc series.
+func identifiesTarget(m promql.Matcher, paramValues map[string]bool) bool {
+	switch m.Op {
+	case "=":
+		return paramValues[m.Value]
+	case "=~":
+		for v := range paramValues {
+			if strings.Contains(m.Value, v) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// targetProbe builds `count({__name__="metric", <target matchers>})`: the
+// entry's metric narrowed to this target and nothing else. Matchers whose
+// value is one of the target's own parameters identify the target; every
+// other matcher describes the failure and is dropped, because a healthy
+// cluster is supposed to fail those.
+func targetProbe(metric string, matchers []promql.Matcher, paramValues map[string]bool) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, `count({__name__=%q`, metric)
+	seen := map[string]bool{}
+	for _, m := range matchers {
+		if seen[m.Label] || !identifiesTarget(m, paramValues) {
+			continue
+		}
+		seen[m.Label] = true
+		fmt.Fprintf(&b, ", %s%s%q", m.Label, m.Op, m.Value)
+	}
+	b.WriteString("})")
+	return b.String()
 }
 
 func renderForCheck(name, tmpl string, params map[string]string) (string, error) {

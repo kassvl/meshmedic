@@ -502,8 +502,23 @@ func (d *Detector) evaluateSignal(ctx context.Context, now time.Time, key string
 		// visible, so this really is "the traffic stopped", not "we went
 		// blind".
 		if !s.Signal.AbsenceIsSignal {
+			// An empty result on a target the coverage probe just proved
+			// visible is a real answer, not an admission. A counter-based
+			// failure signal (response_code="403", response_flags="UO")
+			// returns nothing precisely when the failure is not happening,
+			// and on a healthy mesh that is most entries most of the time:
+			// measured live, 41 of 49 evaluations. Calling those blind would
+			// bury the handful that genuinely are, which is the failure the
+			// coverage number exists to prevent.
+			//
+			// The reason is still recorded, so "clear because nothing
+			// matched" stays distinguishable from "clear because the value
+			// was under threshold", and an entry that is empty forever is
+			// caught at config time by validate --against-prometheus rather
+			// than re-derived every cycle.
 			st.state, st.since = inactive, time.Time{}
-			ev.Outcome, ev.Reason = OutcomeBlind, "signal returned no series"
+			ev.Outcome = OutcomeClear
+			ev.Reason = "signal returned no series; the target is observed, so nothing matched"
 			return ev, false
 		}
 		value = 0

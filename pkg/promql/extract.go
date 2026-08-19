@@ -51,10 +51,22 @@ var aggregators = map[string]bool{
 	"limit_ratio": true,
 }
 
+// Matcher is one label matcher as written in the query.
+type Matcher struct {
+	Label string
+	Op    string // = != =~ !~
+	Value string
+}
+
 // Refs is what a query depends on.
 type Refs struct {
 	Metrics []string // metric names, sorted and deduplicated
 	Labels  []string // label keys referenced by matchers or grouping
+	// Matchers are the label matchers as written, which lets a caller tell a
+	// selector that identifies a target (namespace, service) apart from one
+	// that describes a failure (response_code, response_flags). The first
+	// kind must resolve to series on a healthy cluster; the second must not.
+	Matchers []Matcher
 }
 
 // Extract returns the metric names and label keys the query references.
@@ -65,6 +77,7 @@ func Extract(query string) (Refs, error) {
 	}
 	metrics := map[string]bool{}
 	labels := map[string]bool{}
+	var matchers []Matcher
 
 	depth := 0   // brace nesting: inside {} we are in a label matcher list
 	bracket := 0 // bracket nesting: inside [] is a range or subquery step
@@ -103,6 +116,9 @@ func Extract(query string) (Refs, error) {
 					continue
 				}
 				labels[tk.text] = true
+				if v := peek(toks, i+2); v != nil && v.kind == str {
+					matchers = append(matchers, Matcher{Label: tk.text, Op: next.text, Value: v.text})
+				}
 			}
 		case tk.kind == ident && depth == 0:
 			if keywords[tk.text] {
@@ -125,7 +141,7 @@ func Extract(query string) (Refs, error) {
 			metrics[tk.text] = true
 		}
 	}
-	return Refs{Metrics: sortedKeys(metrics), Labels: sortedKeys(labels)}, nil
+	return Refs{Metrics: sortedKeys(metrics), Labels: sortedKeys(labels), Matchers: matchers}, nil
 }
 
 // collectGrouping reads the parenthesised label list following a grouping

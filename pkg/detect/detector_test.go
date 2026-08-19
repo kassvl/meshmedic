@@ -731,13 +731,20 @@ func TestNoResolutionWhenTrafficVanishes(t *testing.T) {
 // error are three different facts about the world, and a detector that folds
 // them into one silent answer cannot be trusted with any of them.
 func TestEmptyZeroAndErrorAreThreeDistinctOutcomes(t *testing.T) {
+	// The invariant is that the three stay *distinguishable*, not that they
+	// map to three different outcome labels. An empty result on a target the
+	// coverage probe just proved visible is a real answer: a failure-flag
+	// signal returns nothing exactly when the failure is absent. It is
+	// reported clear with a reason that says why, which keeps it separable
+	// from a clear that came from a value under threshold. Blind is reserved
+	// for the cases where the tool genuinely did not get an answer.
 	cases := []struct {
 		name    string
 		answer  func() (float64, error)
 		outcome Outcome
 		reason  string
 	}{
-		{"empty vector", func() (float64, error) { return 0, prom.ErrNoData }, OutcomeBlind, "no series"},
+		{"empty vector", func() (float64, error) { return 0, prom.ErrNoData }, OutcomeClear, "no series"},
 		{"zero value", func() (float64, error) { return 0, nil }, OutcomeClear, ""},
 		{"query error", func() (float64, error) { return 0, errors.New("HTTP 500") }, OutcomeBlind, "query failed"},
 		{"breaching value", func() (float64, error) { return 1, nil }, OutcomeFiring, ""},
@@ -760,7 +767,44 @@ func TestEmptyZeroAndErrorAreThreeDistinctOutcomes(t *testing.T) {
 			if tc.reason != "" && !strings.Contains(got.Reason, tc.reason) {
 				t.Errorf("reason = %q, want it to mention %q", got.Reason, tc.reason)
 			}
+			if tc.name == "zero value" && got.Reason != "" {
+				t.Errorf("a measured zero carried reason %q; it must stay separable from an empty result", got.Reason)
+			}
 		})
+	}
+}
+
+// Blind is what the tool reports when it did not get an answer, and the two
+// ways that happens must not be confused with each other or with health.
+func TestBlindIsReservedForNotGettingAnAnswer(t *testing.T) {
+	// Case 1: the target is not visible at all.
+	q := valueByQueryFunc(func(promql string) (float64, error) {
+		if promql == "dark-probe" {
+			return 0, prom.ErrNoData
+		}
+		return 0, nil
+	})
+	d := New([]catalog.Scenario{testScenario()},
+		[]Target{{CoverageProbe: "dark-probe", Params: map[string]string{}}},
+		q, func(context.Context, Incident) error { return nil })
+	cycle := d.Tick(context.Background(), time.Now())
+	if cycle.Blind != 1 || cycle.Clear != 0 {
+		t.Errorf("unobserved target: blind=%d clear=%d, want 1 and 0", cycle.Blind, cycle.Clear)
+	}
+
+	// Case 2: the target is visible but the signal query itself failed.
+	q2 := valueByQueryFunc(func(promql string) (float64, error) {
+		if promql == testProbe {
+			return 1, nil
+		}
+		return 0, errors.New("HTTP 503")
+	})
+	d2 := New([]catalog.Scenario{testScenario()},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{}}},
+		q2, func(context.Context, Incident) error { return nil })
+	cycle2 := d2.Tick(context.Background(), time.Now())
+	if cycle2.Blind != 1 || cycle2.Clear != 0 {
+		t.Errorf("failed signal query: blind=%d clear=%d, want 1 and 0", cycle2.Blind, cycle2.Clear)
 	}
 }
 
