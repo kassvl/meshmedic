@@ -2,7 +2,7 @@
 
 Scenario `rate-limit-throttling` (severity warning) fired for `namespace=demo` `service=payments` `stable_subset=v1` `subset=v2` `workload=payments-v2`.
 
-The signal has held at **3.267** (threshold > 0.5 for 60s) since 2026-08-19T05:58:34Z.
+The signal has held at **3.133** (threshold > 0.5 for 60s) since 2026-08-19T07:28:41Z.
 
 ### Diagnosis
 
@@ -12,7 +12,12 @@ Requests to the service are being rejected with HTTP 429 and the RL (rate limite
 
 | query | value |
 | --- | --- |
-| throttled-by-source{source_workload="ingress-istio"} | 1.642 |
+| throttled-by-source{source_workload="ingress-istio"} | 1.628 |
+
+### Configuration evidence
+
+- envoyfilters-in-namespace (`EnvoyFilter demo/*`) `items[*].metadata.name`: `payments-local-ratelimit`
+- envoyfilters-in-namespace (`EnvoyFilter demo/*`) `items[*].spec.configPatches[*].applyTo`: `HTTP_FILTER`
 
 ### Proposed patch (EnvoyFilter)
 

@@ -2,7 +2,7 @@
 
 Scenario `authz-deny-flood` (severity critical) fired for `namespace=demo` `service=payments` `stable_subset=v1` `subset=v2` `workload=payments-v2`.
 
-The signal has held at **4.391** (threshold > 0.5 for 60s) since 2026-08-19T05:48:12Z.
+The signal has held at **4.457** (threshold > 0.5 for 60s) since 2026-08-19T06:57:44Z.
 
 ### Diagnosis
 
@@ -12,7 +12,13 @@ A workload's calls to a service are being rejected with HTTP 403 by an Istio Aut
 
 | query | value |
 | --- | --- |
-| denied-403-by-source{source_principal="spiffe://cluster.local/ns/demo/sa/default", source_workload="loadgen", source_workload_namespace="demo"} | 2.208 |
+| denied-403-by-source{source_principal="spiffe://cluster.local/ns/demo/sa/default", source_workload="loadgen", source_workload_namespace="demo"} | 2.248 |
+
+### Configuration evidence
+
+- authorization-policies (`AuthorizationPolicy demo/*`) `items[*].metadata.name`: `payments-block-loadgen`
+- authorization-policies (`AuthorizationPolicy demo/*`) `items[*].spec.action`: `DENY`
+- authorization-policies (`AuthorizationPolicy demo/*`) `items[*].spec.rules`: `[{"from":[{"source":{"principals":["cluster.local/ns/demo/sa/default"]}}]}]`
 
 ### Proposed patch (AuthorizationPolicy)
 

@@ -545,3 +545,100 @@ func TestGoingBlindMidRunIsNotAFailedEntry(t *testing.T) {
 		t.Errorf("the entry was blamed for the harness going blind: %v", res.Failures)
 	}
 }
+
+// The third time the harness blamed the product for the environment. A laptop
+// slept for nearly five hours while rate-limit-throttling was in its
+// resolution window. The entry had already fired correctly in 1m3s. Go's
+// monotonic clock stops during sleep, so the run measured nine minutes,
+// concluded the incident never closed, and reported FAIL.
+//
+// Wall-clock is what notices; monotonic is exactly what cannot.
+func TestSuspensionDuringResolutionIsBlindNotAFailedEntry(t *testing.T) {
+	breaching := true
+	p := &fakePromFunc{fn: func(promql string) (float64, error) {
+		if strings.HasPrefix(promql, "count(") || promql == "vector(1)" {
+			return 1, nil
+		}
+		if breaching {
+			return 5, nil
+		}
+		return 0, nil
+	}}
+
+	sc := scenario("subject", 1)
+	sc.Signal.For = ""
+	r, _ := harness(t, []catalog.Scenario{sc}, nil)
+	r.prom = p
+
+	// The wall clock jumps five hours the moment the resolution phase starts,
+	// exactly as a sleeping laptop does, while the monotonic clock does not.
+	wall := time.Date(2026, 8, 19, 9, 30, 0, 0, time.UTC)
+	jumped := false
+	r.Wall = func() time.Time { return wall }
+	_ = jumped
+	r.Exec = func(_ context.Context, argv []string) error {
+		if argv[0] == "reset" && !jumped {
+			breaching = false
+			jumped = true
+			wall = wall.Add(4*time.Hour + 52*time.Minute)
+		}
+		return nil
+	}
+
+	s := baseSpec()
+	s.Target = map[string]string{"service": "payments", "namespace": "demo"}
+	s.Expect.Names = []string{"payments"}
+	s.FiresWithin = Duration(3 * time.Minute)
+	s.ResolvesWithin = Duration(6 * time.Minute)
+
+	res := r.Run(context.Background(), s)
+
+	if !res.Fired {
+		t.Fatalf("the entry should still be recorded as having fired: %v", res.Failures)
+	}
+	if !res.Blind {
+		t.Fatalf("a five-hour suspension was not detected: %v", res.Failures)
+	}
+	if res.Passed {
+		t.Error("a void measurement must not pass either")
+	}
+	joined := strings.Join(res.Failures, " ")
+	if strings.Contains(joined, "did not resolve within") {
+		t.Errorf("the entry was blamed for the machine sleeping: %v", res.Failures)
+	}
+	if !strings.Contains(joined, "fired correctly") {
+		t.Errorf("failures = %v, want them to record that the entry did its half", res.Failures)
+	}
+}
+
+// An ordinary slow tick is not a suspension. Calling one blind would make the
+// harness useless on a loaded machine.
+func TestASlowTickIsNotASuspension(t *testing.T) {
+	p := &fakePromFunc{fn: func(promql string) (float64, error) {
+		if strings.HasPrefix(promql, "count(") || promql == "vector(1)" {
+			return 1, nil
+		}
+		return 5, nil
+	}}
+	sc := scenario("subject", 1)
+	sc.Signal.For = ""
+	r, _ := harness(t, []catalog.Scenario{sc}, nil)
+	r.prom = p
+
+	wall := time.Date(2026, 8, 19, 9, 30, 0, 0, time.UTC)
+	r.Wall = func() time.Time { wall = wall.Add(25 * time.Second); return wall } // slow, not frozen
+
+	s := baseSpec()
+	s.Target = map[string]string{"service": "payments", "namespace": "demo"}
+	s.Expect.Names = []string{"payments"}
+	s.FiresWithin = Duration(3 * time.Minute)
+
+	res := r.Run(context.Background(), s)
+
+	if res.Blind {
+		t.Errorf("a 25s tick on a 10s poll was called a suspension: %s", res.BlindReason)
+	}
+	if !res.Passed {
+		t.Errorf("proof failed: %v", res.Failures)
+	}
+}

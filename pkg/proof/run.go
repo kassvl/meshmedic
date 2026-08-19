@@ -74,9 +74,32 @@ type Runner struct {
 	Objects detect.ObjectReader
 	Triage  detect.TriageReader
 
+	// Wall reads the wall clock, which unlike Now keeps advancing while the
+	// machine is asleep. The difference between the two is how a suspended
+	// run is detected.
+	Wall func() time.Time
+	// SuspendAfter is the wall-clock gap between ticks that means the process
+	// was suspended rather than merely slow. Zero uses ten times Poll, with a
+	// floor of two minutes.
+	SuspendAfter time.Duration
+	// suspended records the gap when one is detected.
+	suspended time.Duration
+
 	// onIncident is swapped between the firing and resolving phases so both
 	// can share one detector, and therefore one state machine.
 	onIncident func(detect.Incident)
+}
+
+// suspendThreshold is the wall gap that means suspension. Generous on purpose:
+// a slow tick is normal, a two-minute gap between ten-second polls is not.
+func (r *Runner) suspendThreshold() time.Duration {
+	if r.SuspendAfter > 0 {
+		return r.SuspendAfter
+	}
+	if t := 10 * r.Poll; t > 2*time.Minute {
+		return t
+	}
+	return 2 * time.Minute
 }
 
 // NewRunner builds a runner. reader supplies the cluster reads the detector
@@ -91,6 +114,7 @@ func NewRunner(scenarios []catalog.Scenario, q detect.Querier, reader *kube.Read
 		Log:       func(string, ...any) {},
 		Poll:      10 * time.Second,
 		Sleep:     sleepCtx,
+		Wall:      func() time.Time { return time.Now().Round(0) },
 	}
 	if reader != nil {
 		r.Objects = reader
@@ -125,6 +149,8 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 // poisons every run after it.
 func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 	start := r.Now()
+	wallStart := r.Wall()
+	r.suspended = 0
 	res = Result{Entry: s.Entry}
 
 	defer func() {
@@ -141,6 +167,29 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 			}
 		}
 		res.Duration = r.Now().Sub(start)
+
+		// The whole-run detector, and the one that actually catches a
+		// sleeping laptop. Go's monotonic clock stops while the machine is
+		// suspended, so a run frozen for five hours reports nine minutes of
+		// elapsed time and every deadline inside it silently expired without
+		// a single observation. Wall clock is the only witness. Compared at
+		// the end, this catches a suspension anywhere in the run, including
+		// during a kubectl call where no tick loop is watching.
+		if wallElapsed := r.Wall().Sub(wallStart); wallElapsed-res.Duration > r.suspendThreshold() {
+			gap := wallElapsed - res.Duration
+			if gap > r.suspended {
+				r.suspended = gap
+			}
+			res.Blind = true
+			res.BlindReason = fmt.Sprintf("the process was suspended for about %s during the run", gap.Round(time.Second))
+			res.Passed = false
+			note := "BLIND: " + res.BlindReason + " — the measurement is void and says nothing about the entry"
+			if res.Fired {
+				note = "BLIND: " + res.BlindReason + " — the entry fired correctly in " +
+					res.FiredAfter.Round(time.Second).String() + "; the rest of the measurement is void"
+			}
+			res.Failures = append([]string{note}, res.Failures...)
+		}
 	}()
 
 	// Preflight before touching the cluster. A harness that cannot reach
@@ -180,6 +229,13 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 	res.FiredAfter = after
 	res.Report = doc
 
+	if r.suspended > 0 {
+		res.Blind = true
+		res.BlindReason = fmt.Sprintf("the process was suspended for %s mid-run", r.suspended.Round(time.Second))
+		res.Failures = append(res.Failures,
+			"BLIND: "+res.BlindReason+" — the measurement is void and says nothing about the entry")
+		return res
+	}
 	if !fired {
 		// Distinguish "the entry did not fire" from "we could not see". If
 		// the observation went blind partway through, the entry is not the
@@ -249,6 +305,13 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 		resolved, rAfter := r.waitForResolve(ctx, d, s)
 		res.Resolved = resolved
 		res.ResolveAfter = rAfter
+		if r.suspended > 0 {
+			res.Blind = true
+			res.BlindReason = fmt.Sprintf("the process was suspended for %s during the resolution window", r.suspended.Round(time.Second))
+			res.Failures = append(res.Failures,
+				"BLIND: "+res.BlindReason+" — the entry fired correctly; only the resolution half is void")
+			return res
+		}
 		if !resolved {
 			res.Failures = append(res.Failures, fmt.Sprintf(
 				"%s did not resolve within %s of the fault being removed: the incident opens but never closes",
@@ -322,7 +385,22 @@ func (r *Runner) waitForFire(ctx context.Context, d *detect.Detector, s Spec) (f
 	// a socket that closed thirty seconds in, then blame the entry. Three
 	// consecutive failed liveness checks ends the run in seconds.
 	consecutiveBlind := 0
+	lastTick := r.Wall()
 	for r.Now().Before(deadline) {
+		// A suspended observer is a blind one. Go's monotonic clock stops
+		// while a laptop sleeps, so a run that was frozen for five hours
+		// measures nine minutes and reports the entry as never having
+		// resolved. That happened here: rate-limit-throttling fired
+		// correctly in 1m3s, the machine slept through the resolution
+		// window, and the harness blamed the entry. Wall-clock is what
+		// notices; monotonic is exactly what cannot.
+		if gap := r.Wall().Sub(lastTick); gap > r.suspendThreshold() {
+			r.Log("wall clock jumped %s between ticks: the process was suspended, so this measurement is void", gap.Round(time.Second))
+			r.suspended = gap
+			return false, nil, "", 0
+		}
+		lastTick = r.Wall()
+
 		d.Tick(ctx, r.Now())
 		if fired {
 			break
@@ -375,7 +453,15 @@ func (r *Runner) waitForResolve(ctx context.Context, d *detect.Detector, s Spec)
 		}
 		return nil
 	}
+	lastTick := r.Wall()
 	for r.Now().Before(deadline) && ctx.Err() == nil {
+		if gap := r.Wall().Sub(lastTick); gap > r.suspendThreshold() {
+			r.Log("wall clock jumped %s between ticks: the process was suspended, so this measurement is void", gap.Round(time.Second))
+			r.suspended = gap
+			return false, 0
+		}
+		lastTick = r.Wall()
+
 		d.Tick(ctx, r.Now())
 		if resolved {
 			return true, r.Now().Sub(start)

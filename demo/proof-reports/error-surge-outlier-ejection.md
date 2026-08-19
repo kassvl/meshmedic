@@ -2,7 +2,7 @@
 
 Scenario `error-surge-outlier-ejection` (severity critical) fired for `namespace=demo` `service=payments` `stable_subset=v1` `subset=v2` `workload=payments-v2`.
 
-The signal has held at **0.1976** (threshold > 0.15 for 120s) since 2026-08-19T05:11:35Z.
+The signal has held at **0.1904** (threshold > 0.15 for 120s) since 2026-08-19T07:13:56Z.
 
 ### Diagnosis
 
@@ -12,10 +12,13 @@ A service's 5xx ratio holds above 15 percent. When the errors come from a subset
 
 | query | value |
 | --- | --- |
-| errors-by-workload{destination_workload="payments-v2"} | 0.781 |
-| errors-by-workload{destination_workload="payments-v1"} | 0 |
-| requests-by-workload{destination_workload="payments-v1"} | 3.171 |
-| requests-by-workload{destination_workload="payments-v2"} | 0.781 |
+| errors-by-workload{destination_workload="payments-v2"} | 0.7523 |
+| requests-by-workload{destination_workload="payments-v1"} | 3.2 |
+| requests-by-workload{destination_workload="payments-v2"} | 0.7523 |
+
+### Configuration evidence
+
+- suspect-workload-env (`Deployment demo/payments-v2`) `spec.template.spec.containers[*].env`: `NAME=payments-v2 MESSAGE=ok TIMING_50_PERCENTILE=20ms UPSTREAM_URIS=http://ledger:9090 ERROR_RATE=0.9 ERROR_CODE=500`
 
 ### Proposed patch (DestinationRule)
 
