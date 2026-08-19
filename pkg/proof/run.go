@@ -84,6 +84,14 @@ type Runner struct {
 	SuspendAfter time.Duration
 	// suspended records the gap when one is detected.
 	suspended time.Duration
+	// flickers counts liveness failures during a run. Even one matters: a
+	// five-second outage fails the coverage probe, which by design clears any
+	// pending breach so that a breach measured while blind cannot mature into
+	// an incident. That is correct for the detector and brutal for a fixed
+	// proof budget, because a blink costs the entry its entire hold duration.
+	// So a run that flickered and then did not fire is not evidence about the
+	// entry; it is evidence about the network.
+	flickers int
 
 	// onIncident is swapped between the firing and resolving phases so both
 	// can share one detector, and therefore one state machine.
@@ -151,6 +159,7 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 	start := r.Now()
 	wallStart := r.Wall()
 	r.suspended = 0
+	r.flickers = 0
 	res = Result{Entry: s.Entry}
 
 	defer func() {
@@ -237,6 +246,21 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 		return res
 	}
 	if !fired {
+		// A flicker is enough. Checking preflight again here is not, because
+		// by the time an entry has failed to fire the observer has usually
+		// recovered, and a recovered observer reports everything is fine
+		// about a window it spent blind. Measured live: the port-forward
+		// dropped for one tick, the coverage probe failed, the pending
+		// breach was cleared as designed, the hold duration restarted with
+		// no budget left, and the run blamed an entry that had already been
+		// proven twice.
+		if r.flickers > 0 {
+			res.Blind = true
+			res.BlindReason = fmt.Sprintf("the observer went blind %d time(s) during the window", r.flickers)
+			res.Failures = append(res.Failures,
+				"BLIND: "+res.BlindReason+" — each blink clears any pending breach by design, so a non-firing result here is evidence about the network, not the entry")
+			return res
+		}
 		// Distinguish "the entry did not fire" from "we could not see". If
 		// the observation went blind partway through, the entry is not the
 		// thing that failed.
@@ -412,7 +436,8 @@ func (r *Runner) waitForFire(ctx context.Context, d *detect.Detector, s Spec) (f
 			consecutiveBlind = 0
 		} else {
 			consecutiveBlind++
-			r.Log("liveness check %d/3 failed: the observer may have died", consecutiveBlind)
+			r.flickers++
+			r.Log("liveness check %d/3 failed (%d this run): the observer may have died", consecutiveBlind, r.flickers)
 			if consecutiveBlind >= 3 {
 				r.Log("aborting: three consecutive liveness failures, the harness is blind")
 				return false, nil, "", 0

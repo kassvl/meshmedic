@@ -2,7 +2,7 @@
 
 Scenario `fault-injection-left-in-production` (severity critical) fired for `namespace=demo` `service=payments` `stable_subset=v1` `subset=v2` `workload=payments-v2`.
 
-The signal has held at **2.076** (threshold > 0.5 for 60s) since 2026-08-19T07:21:27Z.
+The signal has held at **1.924** (threshold > 0.5 for 60s) since 2026-08-19T13:25:40Z.
 
 ### Diagnosis
 
@@ -12,7 +12,7 @@ A VirtualService is injecting faults (aborts or delays) into live traffic: reque
 
 | query | value |
 | --- | --- |
-| fault-injected-rate | 1.011 |
+| fault-injected-rate | 0.933 |
 
 ### Configuration evidence
 

@@ -2,7 +2,7 @@
 
 Scenario `traffic-vanished-triage` (severity critical) fired for `namespace=demo` `service=payments` `stable_subset=v1` `subset=v2` `workload=payments-v2`.
 
-The signal has held at **1** (threshold > 0.5 for 60s) since 2026-08-19T06:14:56Z.
+The signal has held at **1** (threshold > 0.5 for 60s) since 2026-08-19T12:35:25Z.
 
 ### Diagnosis
 
@@ -12,26 +12,26 @@ The service was receiving steady traffic ten minutes ago and now receives none, 
 
 | query | value |
 | --- | --- |
-| former-callers-by-source{source_workload="loadgen", source_workload_namespace="demo"} | 1.179 |
+| former-callers-by-source{source_workload="loadgen", source_workload_namespace="demo"} | 3.513 |
 
 ### Log evidence
 
 **client-failure-log-sweep** — `loadgen`:
 
 ```
-[pod/loadgen-6b47549665-x2rhg/loadgen] curl: (6) Could not resolve host: payments-svc.demo
-[pod/loadgen-6b47549665-x2rhg/loadgen] curl: (6) Could not resolve host: payments-svc.demo
-[pod/loadgen-6b47549665-x2rhg/loadgen] curl: (6) Could not resolve host: payments-svc.demo
-[pod/loadgen-6b47549665-x2rhg/loadgen] curl: (6) Could not resolve host: payments-svc.demo
-[pod/loadgen-6b47549665-x2rhg/loadgen] curl: (6) Could not resolve host: payments-svc.demo
-[pod/loadgen-6b47549665-x2rhg/loadgen] curl: (6) Could not resolve host: payments-svc.demo
-[pod/loadgen-6b47549665-x2rhg/loadgen] curl: (6) Could not resolve host: payments-svc.demo
-[pod/loadgen-6b47549665-x2rhg/loadgen] curl: (6) Could not resolve host: payments-svc.demo
+[pod/loadgen-6b47549665-whnr4/loadgen] curl: (6) Could not resolve host: payments-svc.demo
+[pod/loadgen-6b47549665-whnr4/loadgen] curl: (6) Could not resolve host: payments-svc.demo
+[pod/loadgen-6b47549665-whnr4/loadgen] curl: (6) Could not resolve host: payments-svc.demo
+[pod/loadgen-6b47549665-whnr4/loadgen] curl: (6) Could not resolve host: payments-svc.demo
+[pod/loadgen-6b47549665-whnr4/loadgen] curl: (6) Could not resolve host: payments-svc.demo
+[pod/loadgen-6b47549665-whnr4/loadgen] curl: (6) Could not resolve host: payments-svc.demo
+[pod/loadgen-6b47549665-whnr4/loadgen] curl: (6) Could not resolve host: payments-svc.demo
+[pod/loadgen-6b47549665-whnr4/loadgen] curl: (6) Could not resolve host: payments-svc.demo
 ```
 
 ### Recent rollouts
 
-**recent-rollouts** — `loadgen` rolled 220s ago, template diff (previous → current):
+**recent-rollouts** — `loadgen` rolled 209s ago, template diff (previous → current):
 
 ```diff
 - "pod-template-hash": "58bf55cf44"

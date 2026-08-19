@@ -2,7 +2,7 @@
 
 Scenario `canary-latency-rollback` (severity critical) fired for `namespace=demo` `service=payments` `stable_subset=v1` `subset=v2` `workload=payments-v2`.
 
-The signal has held at **2485** (threshold > 1000 for 90s) since 2026-08-19T07:05:17Z.
+The signal has held at **2485** (threshold > 1000 for 90s) since 2026-08-19T12:48:49Z.
 
 ### Diagnosis
 
@@ -12,8 +12,8 @@ A newly shifted traffic subset (canary) shows p99 latency far above the stable s
 
 | query | value |
 | --- | --- |
-| p99-stable-for-comparison | 163 |
-| canary-request-share | 0.1852 |
+| p99-stable-for-comparison | 287.5 |
+| canary-request-share | 0.1925 |
 
 ### Configuration evidence
 

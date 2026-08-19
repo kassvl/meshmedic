@@ -642,3 +642,79 @@ func TestASlowTickIsNotASuspension(t *testing.T) {
 		t.Errorf("proof failed: %v", res.Failures)
 	}
 }
+
+// Measured live: the port-forward dropped for a single tick, the coverage
+// probe failed, the detector cleared the pending breach as designed so that a
+// breach measured while blind could not mature, the hold duration restarted
+// with no budget left, and the run reported FAIL against an entry that had
+// already been proven twice that day.
+//
+// One blink is enough to void a non-firing result. Re-checking liveness after
+// the fact does not help: by then the observer has recovered and reports that
+// everything is fine about a window it spent blind.
+func TestOneFlickerVoidsANonFiringResult(t *testing.T) {
+	tick := 0
+	p := &fakePromFunc{fn: func(promql string) (float64, error) {
+		if promql == "vector(1)" {
+			tick++
+			if tick == 3 { // one blink, then recovery
+				return 0, errors.New("connection refused")
+			}
+			return 1, nil
+		}
+		if strings.HasPrefix(promql, "count(") {
+			return 1, nil
+		}
+		return 0, nil // never breaching, so the entry cannot fire
+	}}
+	r, _ := harness(t, []catalog.Scenario{scenario("subject", 1)}, nil)
+	r.prom = p
+
+	s := baseSpec()
+	s.Target = map[string]string{"service": "payments", "namespace": "demo"}
+	s.FiresWithin = Duration(2 * time.Minute)
+
+	res := r.Run(context.Background(), s)
+
+	if !res.Blind {
+		t.Fatalf("a liveness flicker did not void the result: %v", res.Failures)
+	}
+	if res.Passed {
+		t.Error("a blind run must not pass")
+	}
+	if strings.Contains(strings.Join(res.Failures, " "), "did not fire within") {
+		t.Errorf("the entry was blamed for a network blink: %v", res.Failures)
+	}
+	if !strings.Contains(strings.Join(res.Failures, " "), "not the entry") {
+		t.Errorf("failures = %v, want them to name the network", res.Failures)
+	}
+}
+
+// With no flicker, a genuinely non-firing entry must still fail. The rule
+// above must not become a way for every failure to excuse itself.
+func TestNoFlickerStillFailsANonFiringEntry(t *testing.T) {
+	p := &fakePromFunc{fn: func(promql string) (float64, error) {
+		if promql == "vector(1)" || strings.HasPrefix(promql, "count(") {
+			return 1, nil
+		}
+		return 0, nil
+	}}
+	r, _ := harness(t, []catalog.Scenario{scenario("subject", 1)}, nil)
+	r.prom = p
+
+	s := baseSpec()
+	s.Target = map[string]string{"service": "payments", "namespace": "demo"}
+	s.FiresWithin = Duration(2 * time.Minute)
+
+	res := r.Run(context.Background(), s)
+
+	if res.Blind {
+		t.Fatalf("a clean run was called blind: %s", res.BlindReason)
+	}
+	if res.Passed {
+		t.Error("an entry that never fired must not pass")
+	}
+	if !strings.Contains(strings.Join(res.Failures, " "), "did not fire within") {
+		t.Errorf("failures = %v, want the entry blamed when the observer was fine", res.Failures)
+	}
+}

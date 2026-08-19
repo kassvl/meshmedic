@@ -2,7 +2,7 @@
 
 Scenario `route-timeout-too-short` (severity critical) fired for `namespace=demo` `service=payments` `stable_subset=v1` `subset=v2` `workload=payments-v2`.
 
-The signal has held at **4.095** (threshold > 0.5 for 60s) since 2026-08-19T05:38:17Z.
+The signal has held at **3.695** (threshold > 0.5 for 60s) since 2026-08-19T12:26:58Z.
 
 ### Diagnosis
 
@@ -12,8 +12,13 @@ A VirtualService route timeout is shorter than the backend's real response time,
 
 | query | value |
 | --- | --- |
-| timed-out-rate | 2.083 |
-| backend-p99-latency-ms | 165.5 |
+| timed-out-rate | 1.904 |
+| backend-p99-latency-ms | 168 |
+
+### Configuration evidence
+
+- virtualservice-timeouts (`VirtualService demo/payments`) `spec.http[*].route`: `[{"destination":{"host":"payments","subset":"v1"},"weight":80},{"destination":{"host":"payments","subset":"v2"},"weight":20}]`
+- virtualservice-timeouts (`VirtualService demo/payments`) `spec.http[*].timeout`: `0.01s`
 
 ### Proposed patch (VirtualService)
 
