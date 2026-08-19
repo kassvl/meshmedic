@@ -1,6 +1,17 @@
 .DS_Store
+
+# Built binaries and release artifacts
 /meshmedic
+dist/
+
+# Demo recording workspace
 demo/video/clips/
 demo/video/node_modules/
 demo/video/record-run.log
-dist/
+
+# The working plan is the author's, not the product's documentation.
+# It stays on disk and out of the repository.
+PRP.md
+
+# Stray capture, kept locally
+meshmedic-pr-screenshot.png
