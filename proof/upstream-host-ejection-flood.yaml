@@ -1,0 +1,31 @@
+entry: upstream-host-ejection-flood
+summary: >
+  Every payments endpoint is removed by scaling both subsets to zero, so the
+  mesh has no host to route to and stamps UH. The honest representative of the
+  class: whatever the cause, ejection or a broken selector, the symptom an
+  operator meets is a service with no reachable endpoints.
+target:
+  service: payments
+  namespace: demo
+  workload: payments-v2
+  subset: v2
+  stable_subset: v1
+inject:
+  - desc: remove every payments endpoint
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, scale, deploy/payments-v1, deploy/payments-v2, --replicas=0]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, wait, --for=delete, pod, -l, app=payments, --timeout=180s]
+reset:
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, scale, deploy/payments-v1, deploy/payments-v2, --replicas=1]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v1, --timeout=180s]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v2, --timeout=180s]
+settle: 90s
+firesWithin: 6m
+resolvesWithin: 8m
+expect:
+  names:
+    - payments
+  # With no endpoints at all the service also stops serving, so the absence
+  # entry is a legitimate second reading of the same fault rather than a
+  # cascade to suppress.
+  allowFiring:
+    - traffic-vanished-triage

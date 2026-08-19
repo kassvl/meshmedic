@@ -1,0 +1,26 @@
+entry: external-authz-denial
+summary: >
+  An ext_authz filter pointed at a deny-all authorization service, so live
+  traffic is refused with 403/UAEX. Distinct from a native AuthorizationPolicy
+  DENY: the decision is made outside the mesh, and an outage of that service
+  fails closed.
+target:
+  service: payments
+  namespace: demo
+  workload: payments-v2
+  subset: v2
+  stable_subset: v1
+inject:
+  - desc: route authorization through a deny-all external service
+    run: [kubectl, --context=kind-meshmedic-demo, apply, -f, demo/manifests/external-authz-fault.yaml]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/ext-authz, --timeout=180s]
+reset:
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, delete, envoyfilter, payments-ext-authz, --ignore-not-found]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, delete, deploy, ext-authz, --ignore-not-found]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, delete, svc, ext-authz, --ignore-not-found]
+settle: 90s
+firesWithin: 6m
+resolvesWithin: 6m
+expect:
+  names:
+    - source_workload

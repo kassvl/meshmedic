@@ -41,6 +41,7 @@ import (
 	"github.com/kassvl/meshmedic/pkg/kube"
 	"github.com/kassvl/meshmedic/pkg/prom"
 	"github.com/kassvl/meshmedic/pkg/proof"
+	"gopkg.in/yaml.v3"
 )
 
 func main() {
@@ -415,6 +416,7 @@ func listCoverage(scenarios []catalog.Scenario, specs []proof.Spec) {
 	for _, sp := range specs {
 		have[sp.Entry] = sp.Summary
 	}
+	declared := loadUnprovable()
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "ENTRY\tPROOF\tFAULT")
 	proven := 0
@@ -424,14 +426,56 @@ func listCoverage(scenarios []catalog.Scenario, specs []proof.Spec) {
 			proven++
 			continue
 		}
+		if reason, ok := declared[s.ID]; ok {
+			fmt.Fprintf(w, "%s\tunprovable\t%s\n", s.ID, firstSentence(reason))
+			continue
+		}
 		fmt.Fprintf(w, "%s\tNONE\t-\n", s.ID)
 	}
 	w.Flush()
-	fmt.Printf("\n%d of %d entries have an end-to-end proof\n", proven, len(scenarios))
-	if proven < len(scenarios) {
-		fmt.Printf("%d entries are asserted but not demonstrated: nothing has shown that they fire on a real fault\n",
-			len(scenarios)-proven)
+
+	silent := len(scenarios) - proven - len(declared)
+	fmt.Printf("\n%d proven, %d declared unprovable with a reason, %d silently missing\n",
+		proven, len(declared), silent)
+	if silent > 0 {
+		fmt.Println("A silently missing entry is the ambiguous kind: nobody can tell whether it has not been")
+		fmt.Println("got to yet or cannot be done. Write a proof, or declare it in proof/UNPROVABLE.yaml.")
 	}
+}
+
+// loadUnprovable reads the declarations of entries that cannot be proven here.
+// A missing file means none are declared, which is a legitimate state and not
+// an error: it simply means every gap is of the ambiguous kind.
+func loadUnprovable() map[string]string {
+	data, err := os.ReadFile("proof/UNPROVABLE.yaml")
+	if err != nil {
+		return map[string]string{}
+	}
+	var doc struct {
+		Unprovable []struct {
+			Entry  string `yaml:"entry"`
+			Reason string `yaml:"reason"`
+		} `yaml:"unprovable"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return map[string]string{}
+	}
+	out := map[string]string{}
+	for _, u := range doc.Unprovable {
+		out[u.Entry] = strings.TrimSpace(u.Reason)
+	}
+	return out
+}
+
+func firstSentence(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if i := strings.Index(s, ". "); i > 0 {
+		return s[:i+1]
+	}
+	if len(s) > 110 {
+		return s[:110] + "..."
+	}
+	return s
 }
 
 func summarize(results []proof.Result, scenarios []catalog.Scenario, specs []proof.Spec) int {

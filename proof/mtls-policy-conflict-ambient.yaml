@@ -1,0 +1,27 @@
+entry: mtls-policy-conflict-ambient
+summary: >
+  STRICT mTLS for the namespace plus a plaintext client that is not in the
+  mesh. In ambient mode the denial happens at L4 in ztunnel and never becomes
+  an HTTP request, so this is the class every request-metric tool misses.
+target:
+  service: payments
+  namespace: demo
+  workload: payments-v2
+  subset: v2
+  stable_subset: v1
+inject:
+  - desc: strict mTLS plus an unenrolled plaintext caller
+    run: [kubectl, --context=kind-meshmedic-demo, apply, -f, demo/manifests/mtls-strict-fault.yaml]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, default, wait, --for=condition=Ready, pod/plain-client, --timeout=180s]
+reset:
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, delete, peerauthentication, demo-strict, --ignore-not-found]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, default, delete, pod, plain-client, --ignore-not-found, --grace-period=1]
+settle: 90s
+firesWithin: 6m
+resolvesWithin: 6m
+expect:
+  # The report must show the denial came from a caller with no mesh identity.
+  # A DENY that does not distinguish "unenrolled client" from "policy says no"
+  # sends the operator to the wrong fix.
+  names:
+    - unknown

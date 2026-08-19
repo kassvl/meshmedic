@@ -33,6 +33,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// unprovableFile holds the declarations of entries that cannot be proven on
+// this testbed. It lives beside the proofs so the inventory and the exceptions
+// are read from one place.
+const unprovableFile = "UNPROVABLE.yaml"
+
 // Spec is the declarative proof for one catalog entry. Keeping it declarative
 // rather than a shell script is what makes adding the next entry's proof a
 // reviewable diff instead of a new program.
@@ -131,6 +136,13 @@ func LoadDir(dir string) ([]Spec, error) {
 	seen := map[string]string{}
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
+			continue
+		}
+		// UNPROVABLE.yaml is the declaration of entries that cannot be proven
+		// here, not a proof. Skipped by name rather than by a clever rule,
+		// because a clever rule is the kind of thing that silently swallows a
+		// real spec someone named badly.
+		if e.Name() == unprovableFile {
 			continue
 		}
 		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
