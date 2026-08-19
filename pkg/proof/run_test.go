@@ -2,6 +2,7 @@ package proof
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -448,4 +449,99 @@ func (f *fakePromFunc) QuerySeries(_ context.Context, promql string) ([]prom.Sam
 		return nil, err
 	}
 	return []prom.Sample{{Labels: map[string]string{"destination_workload": "payments-v2"}, Value: v}}, nil
+}
+
+// The failure this session actually hit: the Prometheus port-forward died,
+// the harness queried a closed socket for seventeen minutes, and reported the
+// catalog entry as failing. Blaming an entry for the observer's blindness is
+// the exact mistake the detector's own four-state model exists to prevent,
+// and a proof harness that commits it is worse than no harness.
+func TestUnreachablePrometheusIsBlindNotAFailedEntry(t *testing.T) {
+	p := &fakePromFunc{fn: func(string) (float64, error) {
+		return 0, errors.New("dial tcp 127.0.0.1:9090: connect: connection refused")
+	}}
+	r, ran := harness(t, []catalog.Scenario{scenario("subject", 1)}, nil)
+	r.prom = p
+
+	s := baseSpec()
+	s.Target = map[string]string{"service": "payments", "namespace": "demo"}
+	s.FiresWithin = Duration(3 * time.Minute)
+
+	res := r.Run(context.Background(), s)
+
+	if !res.Blind {
+		t.Fatalf("run was not marked blind: %+v", res.Failures)
+	}
+	if res.Passed {
+		t.Error("a blind run must not pass either")
+	}
+	if !strings.Contains(res.BlindReason, "unreachable") {
+		t.Errorf("blind reason = %q, want it to name the unreachable server", res.BlindReason)
+	}
+	if !strings.Contains(strings.Join(res.Failures, " "), "says nothing about the entry") {
+		t.Errorf("failures = %v, want them to refuse to blame the entry", res.Failures)
+	}
+	// And nothing was injected, so the cluster was never touched.
+	for _, c := range *ran {
+		if strings.Contains(c, "inject") {
+			t.Errorf("a fault was injected despite the harness being blind: %v", *ran)
+		}
+	}
+}
+
+// A target that simply has no mesh telemetry is also blind, not a failure.
+func TestTargetWithNoTelemetryIsBlind(t *testing.T) {
+	p := &fakePromFunc{fn: func(string) (float64, error) { return 0, prom.ErrNoData }}
+	r, _ := harness(t, []catalog.Scenario{scenario("subject", 1)}, nil)
+	r.prom = p
+
+	s := baseSpec()
+	s.Target = map[string]string{"service": "ghost", "namespace": "nowhere"}
+	s.FiresWithin = Duration(3 * time.Minute)
+
+	res := r.Run(context.Background(), s)
+
+	if !res.Blind || res.Passed {
+		t.Fatalf("blind=%v passed=%v, want blind and not passed: %v", res.Blind, res.Passed, res.Failures)
+	}
+	if !strings.Contains(res.BlindReason, "no mesh telemetry") {
+		t.Errorf("blind reason = %q", res.BlindReason)
+	}
+}
+
+// Going blind partway through must also not be blamed on the entry: the fault
+// was injected, the entry may well have fired, and the harness stopped being
+// able to tell.
+func TestGoingBlindMidRunIsNotAFailedEntry(t *testing.T) {
+	alive := true
+	p := &fakePromFunc{fn: func(promql string) (float64, error) {
+		if !alive {
+			return 0, errors.New("connection refused")
+		}
+		if strings.HasPrefix(promql, "count(") {
+			return 1, nil
+		}
+		return 0, nil // never breaching while alive
+	}}
+	r, _ := harness(t, []catalog.Scenario{scenario("subject", 1)}, nil)
+	r.prom = p
+	r.Exec = func(_ context.Context, argv []string) error {
+		if argv[0] == "inject" {
+			alive = false // the port-forward dies right after injection
+		}
+		return nil
+	}
+
+	s := baseSpec()
+	s.Target = map[string]string{"service": "payments", "namespace": "demo"}
+	s.FiresWithin = Duration(2 * time.Minute)
+
+	res := r.Run(context.Background(), s)
+
+	if !res.Blind {
+		t.Fatalf("run was not marked blind after the observer died mid-run: %v", res.Failures)
+	}
+	if strings.Contains(strings.Join(res.Failures, " "), "did not fire within") {
+		t.Errorf("the entry was blamed for the harness going blind: %v", res.Failures)
+	}
 }

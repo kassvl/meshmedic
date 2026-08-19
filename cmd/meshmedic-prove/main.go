@@ -22,15 +22,19 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"text/tabwriter"
+	"text/template"
 	"time"
 
 	"github.com/kassvl/meshmedic/pkg/catalog"
@@ -95,6 +99,16 @@ func main() {
 		specs = filtered
 	}
 
+	logger := log.New(os.Stderr, "prove: ", log.LstdFlags)
+
+	// Everything that has to be true before a run is worth starting, checked
+	// and printed. A suite that begins without this can spend an hour
+	// producing failures that say nothing: seventeen minutes of that happened
+	// here when a port-forward died unnoticed.
+	if !preflight(*promURL, *kubeContext, scenarios, specs, logger) {
+		os.Exit(1)
+	}
+
 	// Print exactly what is about to be done to the cluster, then require an
 	// acknowledgement. A tool that mutates a mesh should never do it because
 	// someone pasted a command without reading it, and the list below is the
@@ -103,7 +117,6 @@ func main() {
 		os.Exit(2)
 	}
 
-	logger := log.New(os.Stderr, "prove: ", log.LstdFlags)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -166,6 +179,195 @@ func main() {
 	}
 
 	os.Exit(summarize(results, scenarios, specs))
+}
+
+// preflight proves the run can produce a meaningful result before it starts.
+// Each check answers "would a failure after this point mean anything?", and a
+// no anywhere means the answer is no.
+func preflight(promURL, kubeContext string, scenarios []catalog.Scenario, specs []proof.Spec, logger *log.Logger) bool {
+	type check struct {
+		name string
+		run  func() (string, bool)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	client := prom.NewClient(promURL)
+
+	kubectlArgs := func(args ...string) []string {
+		if kubeContext != "" {
+			return append([]string{"--context=" + kubeContext}, args...)
+		}
+		return args
+	}
+	run := func(args ...string) (string, error) {
+		out, err := exec.CommandContext(ctx, "kubectl", kubectlArgs(args...)...).Output()
+		return strings.TrimSpace(string(out)), err
+	}
+
+	checks := []check{
+		{"prometheus answers", func() (string, bool) {
+			if _, err := client.Query(ctx, "vector(1)"); err != nil {
+				return promURL + ": " + err.Error() + " (is the port-forward up?)", false
+			}
+			return promURL, true
+		}},
+		{"prometheus has mesh telemetry", func() (string, bool) {
+			v, err := client.Query(ctx, `count(count by (destination_service_name) (istio_requests_total))`)
+			if err != nil {
+				return "no istio_requests_total series: nothing this suite injects could be observed", false
+			}
+			return fmt.Sprintf("%.0f services reporting", v), true
+		}},
+		{"cluster reachable", func() (string, bool) {
+			out, err := run("get", "nodes", "-o", "name")
+			if err != nil {
+				return "kubectl cannot reach the cluster: " + err.Error(), false
+			}
+			return strings.ReplaceAll(out, "\n", ", "), true
+		}},
+		{"kube context matches the inject commands", func() (string, bool) {
+			// Every spec pins its own context in argv. Reading through a
+			// different one means the dossiers describe another cluster,
+			// which is how a triage proof came back full of connection
+			// errors while the traffic was fine.
+			pinned := map[string]bool{}
+			for _, sp := range specs {
+				for _, c := range sp.Inject {
+					for _, a := range c.Run {
+						if strings.HasPrefix(a, "--context=") {
+							pinned[strings.TrimPrefix(a, "--context=")] = true
+						}
+					}
+				}
+			}
+			if len(pinned) == 0 {
+				return "specs pin no context; reads and writes may target different clusters", true
+			}
+			for c := range pinned {
+				if c != kubeContext {
+					return fmt.Sprintf("specs inject into %q but reads go to %q", c, kubeContext), false
+				}
+			}
+			return kubeContext, true
+		}},
+		{"testbed is clean", func() (string, bool) {
+			// A leftover fault from an interrupted run makes the next proof
+			// measure someone else's incident.
+			out, err := run("-n", "demo", "get", "authorizationpolicy,envoyfilter", "-o", "name")
+			if err != nil {
+				return "cannot check: " + err.Error(), false
+			}
+			if out != "" {
+				return "leftover fault objects in demo: " + strings.ReplaceAll(out, "\n", ", "), false
+			}
+			return "no leftover fault objects", true
+		}},
+		{"no entry is already breaching", func() (string, bool) {
+			// The general version of "is the testbed clean". Enumerating the
+			// knobs a fault might have left behind is brittle and always one
+			// fault-shape short; asking the catalog whether anything is
+			// currently in breach catches a leftover of any shape, including
+			// one nobody has written a proof for yet.
+			breaching := currentlyBreaching(ctx, scenarios, specs, client)
+			if len(breaching) > 0 {
+				return "already in breach before injection: " + strings.Join(breaching, ", "), false
+			}
+			return "catalog quiet on this testbed", true
+		}},
+		{"workloads ready", func() (string, bool) {
+			out, err := run("-n", "demo", "get", "pods", "--no-headers")
+			if err != nil {
+				return "cannot list pods: " + err.Error(), false
+			}
+			total, ready := 0, 0
+			for _, line := range strings.Split(out, "\n") {
+				f := strings.Fields(line)
+				if len(f) < 3 {
+					continue
+				}
+				total++
+				if f[2] == "Running" {
+					ready++
+				}
+			}
+			if total == 0 || ready != total {
+				return fmt.Sprintf("%d of %d pods running in demo", ready, total), false
+			}
+			return fmt.Sprintf("%d/%d running", ready, total), true
+		}},
+	}
+
+	logger.Printf("preflight: %d checks before anything is injected", len(checks))
+	ok := true
+	for _, c := range checks {
+		detail, passed := c.run()
+		mark := "ok  "
+		if !passed {
+			mark = "FAIL"
+			ok = false
+		}
+		logger.Printf("  [%s] %-42s %s", mark, c.name, detail)
+	}
+	if !ok {
+		logger.Printf("preflight failed: a run starting from here would produce failures that say nothing about the catalog")
+	}
+	return ok
+}
+
+// currentlyBreaching evaluates every entry once against the targets the
+// proofs use and returns the ids already past their threshold. It is a single
+// pass, so a hold duration is irrelevant: any breach at all before a fault is
+// injected means the run would be measuring someone else's incident.
+func currentlyBreaching(ctx context.Context, scenarios []catalog.Scenario, specs []proof.Spec, client *prom.Client) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, sp := range specs {
+		for _, s := range scenarios {
+			if seen[s.ID] {
+				continue
+			}
+			query, err := renderForPreflight(s.ID, s.Signal.PromQL, sp.Target)
+			if err != nil {
+				continue // not applicable to this target
+			}
+			v, err := client.Query(ctx, query)
+			if err != nil {
+				continue // no series is the healthy reading for a failure counter
+			}
+			if breachedPreflight(v, s.Signal.Comparison, s.Signal.Threshold) {
+				seen[s.ID] = true
+				out = append(out, fmt.Sprintf("%s (%.4g %s %.4g)", s.ID, v, s.Signal.Comparison, s.Signal.Threshold))
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func renderForPreflight(name, promql string, params map[string]string) (string, error) {
+	t, err := template.New(name).Option("missingkey=error").Parse(promql)
+	if err != nil {
+		return "", err
+	}
+	var b bytes.Buffer
+	if err := t.Execute(&b, params); err != nil {
+		return "", err
+	}
+	return b.String(), nil
+}
+
+func breachedPreflight(v float64, op string, threshold float64) bool {
+	switch op {
+	case ">":
+		return v > threshold
+	case "<":
+		return v < threshold
+	case ">=":
+		return v >= threshold
+	case "<=":
+		return v <= threshold
+	}
+	return false
 }
 
 // confirmed prints every command that will be run against the cluster and

@@ -1,16 +1,20 @@
 package proof
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"sort"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/kassvl/meshmedic/pkg/catalog"
 	"github.com/kassvl/meshmedic/pkg/detect"
 	"github.com/kassvl/meshmedic/pkg/kube"
+	"github.com/kassvl/meshmedic/pkg/prom"
 	"github.com/kassvl/meshmedic/pkg/remediate"
 	"github.com/kassvl/meshmedic/pkg/report"
 )
@@ -28,6 +32,14 @@ type Result struct {
 	Unexpected   []string // other entries that fired and were not allowed to
 	Resolved     bool
 	ResolveAfter time.Duration
+
+	// Blind means the harness could not observe the cluster, so the run says
+	// nothing about the entry. It is deliberately not the same as Passed
+	// being false: blaming an entry for the observer's blindness is the exact
+	// failure the detector's own four-state model exists to prevent, and a
+	// proof harness that commits it is worse than no harness.
+	Blind       bool
+	BlindReason string
 
 	// Failures are the specific reasons the proof did not pass, in the words
 	// an operator needs to fix either the entry or the proof.
@@ -131,6 +143,17 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 		res.Duration = r.Now().Sub(start)
 	}()
 
+	// Preflight before touching the cluster. A harness that cannot reach
+	// Prometheus will watch nothing happen and call the entry broken, which
+	// is what a dead port-forward did here: seventeen minutes of queries into
+	// a closed socket, reported as a failing catalog entry.
+	if reason, ok := r.preflight(ctx, s); !ok {
+		res.Blind, res.BlindReason = true, reason
+		res.Failures = append(res.Failures,
+			"BLIND: "+reason+" — this run says nothing about the entry, and no fault was injected")
+		return res
+	}
+
 	r.Log("injecting the fault")
 	for _, c := range s.Inject {
 		if err := r.Exec(ctx, c.Run); err != nil {
@@ -158,6 +181,15 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 	res.Report = doc
 
 	if !fired {
+		// Distinguish "the entry did not fire" from "we could not see". If
+		// the observation went blind partway through, the entry is not the
+		// thing that failed.
+		if reason, ok := r.preflight(ctx, s); !ok {
+			res.Blind, res.BlindReason = true, reason
+			res.Failures = append(res.Failures,
+				"BLIND: "+reason+" — the fault was injected but the harness stopped being able to observe, so this says nothing about the entry")
+			return res
+		}
 		res.Failures = append(res.Failures, fmt.Sprintf(
 			"%s did not fire within %s of the fault settling", s.Entry, s.FiresWithin.D()))
 		return res
@@ -230,6 +262,38 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 	return res
 }
 
+// alive is the cheap per-tick liveness check: is the server still answering?
+// It deliberately does not ask about the target, only about sight, so a fault
+// that legitimately drives a target's telemetry to zero is not mistaken for a
+// dead observer.
+func (r *Runner) alive(ctx context.Context) (string, bool) {
+	if _, err := r.prom.Query(ctx, "vector(1)"); err != nil && !errors.Is(err, prom.ErrNoData) {
+		return "Prometheus is not answering: " + err.Error(), false
+	}
+	return "", true
+}
+
+// preflight asks whether the harness can observe this target at all: is
+// Prometheus answering, and does the target resolve to mesh telemetry. It runs
+// before injection and again whenever an entry fails to fire, so a blind run
+// is reported as blind rather than as a broken entry.
+func (r *Runner) preflight(ctx context.Context, s Spec) (string, bool) {
+	probe, err := renderQuery("preflight", detect.DefaultCoverageProbe, s.Target)
+	if err != nil {
+		// No namespace to probe on: fall back to asking whether the server
+		// answers at all, which is the part that actually breaks.
+		probe = "up"
+	}
+	samples, err := r.prom.QuerySeries(ctx, probe)
+	switch {
+	case errors.Is(err, prom.ErrNoData), err == nil && len(samples) == 0:
+		return "the target produces no mesh telemetry, so nothing this proof does could be observed", false
+	case err != nil:
+		return "Prometheus is unreachable: " + err.Error(), false
+	}
+	return "", true
+}
+
 // waitForFire ticks a detector until the subject fires or the budget runs out,
 // collecting which other entries fired along the way.
 func (r *Runner) waitForFire(ctx context.Context, d *detect.Detector, s Spec) (fired bool, others []string, doc string, after time.Duration) {
@@ -253,6 +317,11 @@ func (r *Runner) waitForFire(ctx context.Context, d *detect.Detector, s Spec) (f
 		}
 	}
 
+	// Watch the observer, not just the subject. A harness that only checks
+	// its own sight at the start will happily burn its entire budget querying
+	// a socket that closed thirty seconds in, then blame the entry. Three
+	// consecutive failed liveness checks ends the run in seconds.
+	consecutiveBlind := 0
 	for r.Now().Before(deadline) {
 		d.Tick(ctx, r.Now())
 		if fired {
@@ -260,6 +329,16 @@ func (r *Runner) waitForFire(ctx context.Context, d *detect.Detector, s Spec) (f
 		}
 		if ctx.Err() != nil {
 			break
+		}
+		if _, ok := r.alive(ctx); ok {
+			consecutiveBlind = 0
+		} else {
+			consecutiveBlind++
+			r.Log("liveness check %d/3 failed: the observer may have died", consecutiveBlind)
+			if consecutiveBlind >= 3 {
+				r.Log("aborting: three consecutive liveness failures, the harness is blind")
+				return false, nil, "", 0
+			}
 		}
 		r.Sleep(ctx, r.Poll)
 	}
@@ -330,4 +409,17 @@ func (r *Runner) detectorFor(s Spec) *detect.Detector {
 	d.Objects = r.Objects
 	d.Triage = r.Triage
 	return d
+}
+
+// renderQuery fills a query template with the proof's target parameters.
+func renderQuery(name, promql string, params map[string]string) (string, error) {
+	tmpl, err := template.New(name).Option("missingkey=error").Parse(promql)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, params); err != nil {
+		return "", err
+	}
+	return buf.String(), nil
 }
