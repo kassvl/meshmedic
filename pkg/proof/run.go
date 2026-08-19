@@ -264,6 +264,25 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 		}
 		gate.commit()
 		r.Log("baseline warmed: %d readings near the floor accepted, %d rejected as still-decaying", gate.accepted, gate.rejected)
+		// Say what was learned and what threshold it puts in force. Without
+		// this a proof that does not fire leaves nobody able to tell a wrong
+		// baseline from a wrong fault, which cost two full run cycles.
+		for _, sc := range r.scenarios {
+			if sc.Signal.BaselineMultiplier <= 0 {
+				continue
+			}
+			min := sc.Signal.BaselineMinSamples
+			if min <= 0 {
+				min = 20
+			}
+			if learned, ready := r.Baseline.Baseline(targetKeyFor(sc.ID, s.Target), min); ready {
+				r.Log("%s: learned normal %.4g, so the effective threshold is %.4g (%gx)",
+					sc.ID, learned, learned*sc.Signal.BaselineMultiplier, sc.Signal.BaselineMultiplier)
+			} else {
+				r.Log("%s: baseline not ready after warm-up, so the static threshold %.4g still applies",
+					sc.ID, sc.Signal.Threshold)
+			}
+		}
 	}
 
 	r.Log("injecting the fault")
@@ -663,4 +682,20 @@ func (c *floorCollector) commit() {
 			c.inner.Observe(key, v)
 		}
 	}
+}
+
+// targetKeyFor mirrors the detector's own baseline keying, so the prover reads
+// the same learned value the detector will compare against.
+func targetKeyFor(scenarioID string, params map[string]string) string {
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString(scenarioID)
+	for _, k := range keys {
+		fmt.Fprintf(&b, "|%s=%s", k, params[k])
+	}
+	return b.String()
 }

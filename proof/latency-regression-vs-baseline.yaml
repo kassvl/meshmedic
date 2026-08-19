@@ -1,10 +1,18 @@
 entry: latency-regression-vs-baseline
 summary: >
-  A baseline is warmed against healthy traffic first, then a 250ms regression
-  is injected on the canary only. That combination is the entry's whole reason
-  to exist: 250ms is abnormal for this cluster and invisible to any fixed SLO,
-  so the relative threshold catches a regression a static 1000ms number would
-  miss entirely.
+  A baseline is warmed against healthy traffic first, then a 350ms regression
+  is injected on the canary only, which is the entry's whole reason to exist:
+  the result is abnormal for this cluster and invisible to any fixed SLO, so a
+  relative threshold catches what a static 1000ms number would miss entirely.
+
+  The 350 is measured rather than picked. This service calls a downstream
+  ledger on every request, so its healthy p99 is 169.9ms, not the tens of
+  milliseconds the workload alone would suggest, which puts the 3x threshold at
+  509.7ms. A 250ms injection produced 486ms and correctly did not fire, which
+  cost two run cycles to diagnose and is why the prover now logs the learned
+  normal and the threshold it puts in force. 350ms clears 510 with room while
+  leaving the canary subset near 700ms, comfortably under the 1000ms that would
+  bring canary-latency-rollback into breach and suppress the entry under test.
 target:
   service: payments
   namespace: demo
@@ -16,7 +24,7 @@ target:
 warmup: 5m
 inject:
   - desc: a regression that is large for this cluster and small for an SLO
-    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v2, TIMING_50_PERCENTILE=250ms]
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v2, TIMING_50_PERCENTILE=350ms]
   - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v2, --timeout=180s]
 reset:
   - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v2, TIMING_50_PERCENTILE=20ms]

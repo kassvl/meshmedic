@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -240,6 +241,10 @@ type Detector struct {
 	// OnCycle, when set, receives the summary of every completed pass over
 	// all targets. The CLI uses it to print the coverage line each cycle.
 	OnCycle func(Cycle)
+
+	// announced remembers the last effective threshold logged per key, so a
+	// relative threshold is reported when it changes rather than every tick.
+	announced map[string]float64
 
 	// StateFile is where the incident lifecycle is persisted between ticks.
 	// Empty disables persistence, which means a restart re-opens every
@@ -629,7 +634,23 @@ func (d *Detector) effectiveThreshold(s catalog.Scenario, t Target) float64 {
 		minSamples = 20
 	}
 	if base, ready := d.Baseline.Baseline(targetKey(s.ID, t.Params), minSamples); ready {
-		return base * s.Signal.BaselineMultiplier
+		effective := base * s.Signal.BaselineMultiplier
+		// Say what threshold is actually in force, once per change. A
+		// relative threshold is invisible otherwise: an operator watching a
+		// quiet entry cannot tell a well-calibrated one from an entry whose
+		// learned normal drifted so high it can no longer fire. Diagnosing
+		// exactly that on the testbed cost two full proof cycles, because the
+		// number existed only inside this function.
+		key := targetKey(s.ID, t.Params)
+		if d.announced == nil {
+			d.announced = map[string]float64{}
+		}
+		if prev, seen := d.announced[key]; !seen || math.Abs(prev-effective) > prev*0.1 {
+			d.announced[key] = effective
+			d.Log("%s: learned normal %.4g, effective threshold %.4g (%gx), static fallback %.4g",
+				s.ID, base, effective, s.Signal.BaselineMultiplier, s.Signal.Threshold)
+		}
+		return effective
 	}
 	return s.Signal.Threshold
 }
