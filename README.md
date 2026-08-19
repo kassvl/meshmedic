@@ -17,16 +17,32 @@ meshmedic: watching 18 scenarios for 1 targets against http://localhost:9090 eve
 ```
 
 It evaluates every catalog signal against that target and prints the incident
-report — diagnosis, labeled evidence, the rendered patch, the rollback note —
-the moment one fires. Nothing is written to your cluster; MeshMedic holds no
+report the moment one fires: diagnosis, labeled evidence, the rendered patch,
+and the rollback note. Nothing is written to your cluster; MeshMedic holds no
 write credentials at all.
 
-Prefer a binary? `go install github.com/kassvl/meshmedic/cmd/meshmedic@latest`,
-or take a [release archive](https://github.com/kassvl/meshmedic/releases)
-(linux and macOS, amd64 and arm64). The reviewed catalog and its lock are
-compiled into the binary, so a single file is the whole tool: no directory to
-place, nothing to point at. `--catalog` still overrides both when you want to
-run your own entries.
+Prefer a binary? Either of these:
+
+```console
+$ go install github.com/kassvl/meshmedic/cmd/meshmedic@latest   # Go 1.21+
+```
+
+or a [release archive](https://github.com/kassvl/meshmedic/releases) for linux
+and macOS on amd64 and arm64.
+
+Building from a clone works too and needs nothing but Go:
+
+```console
+$ git clone https://github.com/kassvl/meshmedic.git && cd meshmedic
+$ go build -o meshmedic ./cmd/meshmedic
+$ ./meshmedic validate
+catalog OK: 18 scenarios
+```
+
+However you get it, the reviewed catalog and its lock are compiled into the
+binary, so a single file is the whole tool: no directory to place, nothing to
+point at, and it runs from anywhere. `--catalog` still overrides both when you
+want to run entries of your own.
 
 ![MeshMedic demo: chaos to merged PR to healed mesh](demo/video/meshmedic-demo.gif)
 
@@ -195,7 +211,7 @@ $ meshmedic watch --config examples/watch.yaml
 
 Each target is a set of template parameters. Every catalog signal is evaluated
 against it, and a breach must hold for the scenario's `for` duration before it
-fires — the discipline that keeps thresholds from chasing noise.
+fires, which is the discipline that keeps thresholds from chasing noise.
 
 ```yaml
 prometheus: http://localhost:9090
@@ -212,7 +228,7 @@ targets:
 Add a `gitops` section and set `MESHMEDIC_GITHUB_TOKEN` (or `GITHUB_TOKEN`),
 and firing turns into a pull request instead of only a report: a branch named
 after the episode, one commit with the patch file, and the incident report as
-the PR body. This is deliberately config-file-only — write access to a
+the PR body. This is deliberately config-file-only, because write access to a
 repository should not be reachable from a flag pasted out of a README.
 
 ```yaml

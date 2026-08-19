@@ -7,7 +7,7 @@ the measurement that justified it outlives the entry.
 
 ---
 
-## `mtls-policy-conflict` — retired 2026-08-19
+## `mtls-policy-conflict`, retired 2026-08-19
 
 **What it claimed.** Plaintext clients rejected by strict mTLS at L7, detected
 as `istio_requests_total` carrying `response_code="503"` with

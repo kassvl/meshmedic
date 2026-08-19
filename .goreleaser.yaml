@@ -60,7 +60,7 @@ archives:
     formats: [tar.gz]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
-      - catalog/**/*
+      - catalog/*.yaml
       # Without the lock every entry is unlocked and the binary detects
       # nothing; the two ship together or not at all.
       - catalog.lock
@@ -75,8 +75,8 @@ archives:
     formats: [tar.gz]
     name_template: "meshmedic-prove_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
-      - proof/**/*
-      - catalog/**/*
+      - proof/*.yaml
+      - catalog/*.yaml
       - catalog.lock
       - docs/calibration.md
       - LICENSE

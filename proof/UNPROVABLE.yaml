@@ -1,7 +1,7 @@
 # Entries that cannot be proven on this testbed, and why.
 #
 # Boundry's principle, borrowed: every enforcement gap must be visible rather
-# than hidden by omission. An entry with no proof file is ambiguous — nobody
+# than hidden by omission. An entry with no proof file is ambiguous: nobody
 # can tell "we have not got to it" from "it cannot be done". This file makes
 # the second kind explicit, so the inventory reads N proven, M declared
 # unprovable with a reason, and zero silently missing.

@@ -1,6 +1,6 @@
-/meshmedic
-dist/
 .DS_Store
-demo/video/node_modules/
+/meshmedic
 demo/video/clips/
+demo/video/node_modules/
 demo/video/record-run.log
+dist/

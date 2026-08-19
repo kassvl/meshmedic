@@ -65,7 +65,7 @@ as "it is safe".
 An entry whose metric does not exist is perfectly silent. If silence were
 scored, a dead entry would earn the best possible grade. So an entry that
 produced no readings is never graded on its threshold, and an empty query
-result is never folded in as a zero — a zero looks like the safest possible
+result is never folded in as a zero, because a zero looks like the safest
 reading and would drag the observed extreme down.
 
 There are three reasons an entry comes back `unmeasured`, and they need
