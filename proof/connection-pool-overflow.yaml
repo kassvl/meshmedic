@@ -1,0 +1,36 @@
+entry: connection-pool-overflow
+summary: >
+  The DestinationRule connection pool is squeezed to one connection while the
+  backend is slowed and the caller is scaled up, so the circuit breaker sheds
+  load and stamps UO. The shape of a limit that was right until traffic grew.
+target:
+  service: payments
+  namespace: demo
+  workload: payments-v2
+  subset: v2
+  stable_subset: v1
+inject:
+  - desc: slow the backend so connections are held
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v1, deploy/payments-v2, TIMING_50_PERCENTILE=300ms]
+  - desc: raise concurrent demand
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, scale, deploy/loadgen, --replicas=8]
+  - desc: squeeze the pool to one connection
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, patch, destinationrule, payments, --type=merge, -p, '{"spec":{"trafficPolicy":{"connectionPool":{"tcp":{"maxConnections":1},"http":{"http1MaxPendingRequests":1,"http2MaxRequests":1}}}}}']
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v1, --timeout=180s]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v2, --timeout=180s]
+reset:
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, scale, deploy/loadgen, --replicas=1]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v1, deploy/payments-v2, TIMING_50_PERCENTILE=20ms]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, patch, destinationrule, payments, --type=json, -p, '[{"op":"remove","path":"/spec/trafficPolicy"}]']
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v1, --timeout=180s]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v2, --timeout=180s]
+settle: 120s
+firesWithin: 6m
+resolvesWithin: 8m
+expect:
+  names:
+    - payments
+  # Overflow 503s inflate the 5xx ratio. The suppression exists so an operator
+  # is not told to eject endpoints for a limit they set themselves.
+  quiet:
+    - error-surge-outlier-ejection

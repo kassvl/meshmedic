@@ -1,0 +1,33 @@
+entry: latency-regression-vs-baseline
+summary: >
+  A 1200ms regression on the service, injected without warming a baseline
+  first, so the entry fires against its static fallback threshold. What this
+  proves is the entry's detection and reporting; the relative-threshold half of
+  its behaviour needs a warm baseline and is measured separately in
+  demo/baseline-relative.
+target:
+  service: payments
+  namespace: demo
+  workload: payments-v2
+  subset: v2
+  stable_subset: v1
+inject:
+  - desc: slow the whole service well past the static fallback
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v1, deploy/payments-v2, TIMING_50_PERCENTILE=1200ms]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v1, --timeout=180s]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v2, --timeout=180s]
+reset:
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v1, deploy/payments-v2, TIMING_50_PERCENTILE=20ms]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v1, --timeout=180s]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v2, --timeout=180s]
+settle: 90s
+firesWithin: 6m
+resolvesWithin: 6m
+expect:
+  names:
+    - payments
+  # Both subsets are slowed, so the canary entry has no faster stable subset to
+  # contrast against and this is the service-wide reading rather than a canary
+  # one. It may still fire, and that is a true second reading of one fault.
+  allowFiring:
+    - canary-latency-rollback

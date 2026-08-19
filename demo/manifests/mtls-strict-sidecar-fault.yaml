@@ -1,0 +1,30 @@
+# Fault, not part of the healthy testbed. STRICT mTLS on the sidecar-mode
+# namespace plus a plaintext caller outside the mesh. Whether this produces a
+# 503 with UF or URX at the destination, which is what the L7 entry reads, is
+# the open question: a rejected handshake may never become an HTTP request the
+# destination can stamp, which is precisely why the ambient variant of this
+# class reads L4 telemetry instead.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: sidecar-strict
+  namespace: demo-sidecar
+spec:
+  mtls:
+    mode: STRICT
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: plain-client-sidecar
+  namespace: default
+  labels:
+    app: plain-client-sidecar
+spec:
+  restartPolicy: Never
+  containers:
+    - name: curl
+      image: curlimages/curl:8.11.1
+      command: ["sh", "-c"]
+      args:
+        - while true; do curl -s -m 2 -o /dev/null http://orders.demo-sidecar:9090/ || true; sleep 0.5; done

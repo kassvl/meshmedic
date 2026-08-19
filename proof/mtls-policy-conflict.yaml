@@ -1,0 +1,26 @@
+entry: mtls-policy-conflict
+summary: >
+  STRICT mTLS on the sidecar-mode namespace with a plaintext caller outside
+  the mesh. This is the L7 counterpart of the ambient entry, and whether it can
+  fire at all is genuinely open: a rejected handshake may never become an HTTP
+  request the destination can stamp with 503/UF, which is why the ambient
+  variant reads L4 telemetry. The run decides, not the assumption.
+target:
+  service: orders
+  namespace: demo-sidecar
+  workload: orders-v2
+  subset: v2
+  stable_subset: v1
+inject:
+  - desc: strict mTLS on the sidecar namespace plus an unenrolled caller
+    run: [kubectl, --context=kind-meshmedic-demo, apply, -f, demo/manifests/mtls-strict-sidecar-fault.yaml]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, default, wait, --for=condition=Ready, pod/plain-client-sidecar, --timeout=180s]
+reset:
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo-sidecar, delete, peerauthentication, sidecar-strict, --ignore-not-found]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, default, delete, pod, plain-client-sidecar, --ignore-not-found, --grace-period=1]
+settle: 90s
+firesWithin: 6m
+resolvesWithin: 6m
+expect:
+  names:
+    - orders
