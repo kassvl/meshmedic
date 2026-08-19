@@ -53,6 +53,8 @@ func main() {
 		runCheck(os.Args[2:])
 	case "approve":
 		runApprove(os.Args[2:])
+	case "calibrate":
+		runCalibrate(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("meshmedic", version)
 	default:
@@ -70,6 +72,8 @@ func usage() {
   meshmedic check --config watch.yaml            (exit 1 if any target is unobserved)
   meshmedic validate --against-prometheus URL    (do the catalog's metrics exist?)
   meshmedic approve --scenario id --istio 1.24.1 --testbed <commit> [--all]
+  meshmedic calibrate --config watch.yaml [--window 10m]  (does the catalog stay
+                                       quiet on a HEALTHY cluster, and by how much?)
 
 The second watch form needs no config file, which is the quickest way to point
 MeshMedic at a Prometheus you already run:

@@ -1,0 +1,70 @@
+ID                                  TARGET               VERDICT         PEAK   THRESHOLD  HEADROOM  NOTE
+canary-latency-rollback             orders.demo-sidecar  miscalibrated   1450   > 1000     0.69x     held past the threshold for 1m45s on a healthy cluster, which is its full hold duration: this entry fires on health
+authz-deny-flood                    payments.demo        unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+authz-deny-flood                    orders.demo-sidecar  unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+authz-deny-flood                    ghost.nonexistent    unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+canary-latency-rollback             ghost.nonexistent    unmeasured      -      > 1000     -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+connection-pool-overflow            payments.demo        unmeasured      -      > 1        -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+connection-pool-overflow            orders.demo-sidecar  unmeasured      -      > 1        -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+connection-pool-overflow            ghost.nonexistent    unmeasured      -      > 1        -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+error-surge-outlier-ejection        payments.demo        unmeasured      -      > 0.15     -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+error-surge-outlier-ejection        orders.demo-sidecar  unmeasured      -      > 0.15     -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+error-surge-outlier-ejection        ghost.nonexistent    unmeasured      -      > 0.15     -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+external-authz-denial               payments.demo        unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+external-authz-denial               orders.demo-sidecar  unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+external-authz-denial               ghost.nonexistent    unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+fault-injection-left-in-production  payments.demo        unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+fault-injection-left-in-production  orders.demo-sidecar  unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+fault-injection-left-in-production  ghost.nonexistent    unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+latency-regression-vs-baseline      ghost.nonexistent    unmeasured      -      > 1000     -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+mtls-policy-conflict                payments.demo        unmeasured      -      > 1        -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+mtls-policy-conflict                orders.demo-sidecar  unmeasured      -      > 1        -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+mtls-policy-conflict                ghost.nonexistent    unmeasured      -      > 1        -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+mtls-policy-conflict-ambient        payments.demo        unmeasured      -      > 0.2      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+mtls-policy-conflict-ambient        orders.demo-sidecar  unmeasured      -      > 0.2      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+mtls-policy-conflict-ambient        ghost.nonexistent    unmeasured      -      > 0.2      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+no-route-blackhole                  payments.demo        unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+no-route-blackhole                  orders.demo-sidecar  unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+no-route-blackhole                  ghost.nonexistent    unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+rate-limit-throttling               payments.demo        unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+rate-limit-throttling               orders.demo-sidecar  unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+rate-limit-throttling               ghost.nonexistent    unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+retry-storm-damping                 payments.demo        unmeasured      -      > 50       -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+retry-storm-damping                 orders.demo-sidecar  unmeasured      -      > 50       -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+retry-storm-damping                 ghost.nonexistent    unmeasured      -      > 50       -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+route-timeout-too-short             payments.demo        unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+route-timeout-too-short             orders.demo-sidecar  unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+route-timeout-too-short             ghost.nonexistent    unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+upstream-dependency-errors          payments.demo        unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+upstream-dependency-errors          orders.demo-sidecar  unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+upstream-dependency-errors          ghost.nonexistent    unmeasured      -      > 0.5      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+upstream-dependency-latency         orders.demo-sidecar  unmeasured      -      > 200      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+upstream-dependency-latency         ghost.nonexistent    unmeasured      -      > 200      -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+upstream-host-ejection-flood        payments.demo        unmeasured      -      > 1        -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+upstream-host-ejection-flood        ghost.nonexistent    unmeasured      -      > 1        -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+waypoint-overload-scale             orders.demo-sidecar  unmeasured      -      > 1000     -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+waypoint-overload-scale             ghost.nonexistent    unmeasured      -      > 1000     -         no sample resolved (32 empty results): this entry's silence says nothing about its calibration
+canary-latency-rollback             payments.demo        marginal        740    > 1000     1.35x     stayed quiet, but its healthy extreme is only 1.4x from the threshold
+latency-regression-vs-baseline      payments.demo        marginal        740    > 1000     1.35x     stayed quiet, but its healthy extreme is only 1.4x from the threshold
+latency-regression-vs-baseline      orders.demo-sidecar  calibrated      210.7  > 1000     4.75x     quiet with 4.75x headroom
+traffic-vanished-triage             payments.demo        calibrated      0      > 0.5      inf       quiet with +Infx headroom
+traffic-vanished-triage             orders.demo-sidecar  calibrated      0      > 0.5      inf       quiet with +Infx headroom
+traffic-vanished-triage             ghost.nonexistent    calibrated      0      > 0.5      inf       quiet with +Infx headroom
+upstream-dependency-latency         payments.demo        calibrated      96.78  > 200      2.07x     quiet with 2.07x headroom
+upstream-host-ejection-flood        orders.demo-sidecar  calibrated      0      > 1        inf       quiet with +Infx headroom
+waypoint-overload-scale             payments.demo        calibrated      15.35  > 1000     65.1x     quiet with 65.1x headroom
+ingress-edge-outage                 payments.demo        not-applicable  -      > 0.5      -         signal needs a parameter this target does not define
+ingress-edge-outage                 orders.demo-sidecar  not-applicable  -      > 0.5      -         signal needs a parameter this target does not define
+ingress-edge-outage                 ghost.nonexistent    not-applicable  -      > 0.5      -         signal needs a parameter this target does not define
+
+7 calibrated, 2 marginal, 1 miscalibrated, 44 unmeasured, 3 not applicable
+
+1 entries fire on a healthy cluster. Each one is a pull request for a problem nobody has.
+  Raise the threshold to sit above this cluster's healthy peak with room to spare, or
+  give the entry a baselineMultiplier so it fires on deviation from this cluster's own normal
+  instead of a fixed number that is wrong for every cluster but one.
+2 entries stayed quiet but are close enough that an ordinary busy day fires them.
+  Silence today is not calibration. Widen the gap or make the threshold relative.
+44 entries produced no readings, so their silence proves nothing about them.
+  Run `meshmedic validate --against-prometheus` to find out whether the metric is missing,
+  the selector matches nothing, or this target simply has no traffic of that kind.
