@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -20,16 +21,44 @@ import (
 // Reader fetches objects with one kubectl invocation each.
 type Reader struct {
 	bin string
+	// context is the kubeconfig context to read through. Empty uses
+	// kubectl's current-context, which is right in-cluster and a trap on a
+	// laptop: a machine with several clusters configured will happily read
+	// one while the operator believes they are looking at another. That is
+	// not hypothetical; it produced a dossier full of connection-refused
+	// errors during this project's own end-to-end runs, because the reads
+	// went to a different cluster than the traffic.
+	context string
 }
 
-// NewReader locates kubectl on PATH. Callers treat an error as "object
-// evidence disabled", not as fatal: metrics detection works without it.
+// NewReader locates kubectl on PATH and reads through the kubeconfig context
+// named by MESHMEDIC_KUBE_CONTEXT, or the current context when it is unset.
+// Callers treat an error as "object evidence disabled", not as fatal: metrics
+// detection works without it.
 func NewReader() (*Reader, error) {
+	return NewReaderForContext(os.Getenv("MESHMEDIC_KUBE_CONTEXT"))
+}
+
+// NewReaderForContext builds a reader pinned to one kubeconfig context. An
+// empty context means kubectl's current one.
+func NewReaderForContext(kubeContext string) (*Reader, error) {
 	bin, err := exec.LookPath("kubectl")
 	if err != nil {
 		return nil, errors.New("kubectl not found on PATH")
 	}
-	return &Reader{bin: bin}, nil
+	return &Reader{bin: bin, context: kubeContext}, nil
+}
+
+// Context reports which kubeconfig context this reader is pinned to, so a
+// caller can say out loud which cluster it is about to read.
+func (r *Reader) Context() string { return r.context }
+
+// args prefixes every invocation with the pinned context.
+func (r *Reader) args(args []string) []string {
+	if r.context == "" {
+		return args
+	}
+	return append([]string{"--context=" + r.context}, args...)
 }
 
 // Get fetches one object as decoded JSON. An empty namespace queries a
@@ -44,7 +73,7 @@ func (r *Reader) Get(ctx context.Context, apiVersion, kind, namespace, name stri
 	if namespace != "" {
 		args = append(args, "-n", namespace)
 	}
-	out, err := exec.CommandContext(ctx, r.bin, args...).Output()
+	out, err := exec.CommandContext(ctx, r.bin, r.args(args)...).Output()
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
@@ -108,9 +137,9 @@ func (r *Reader) RecentRollouts(ctx context.Context, namespace string, within ti
 	var list struct {
 		Items []struct {
 			Metadata struct {
-				CreationTimestamp time.Time         `json:"creationTimestamp"`
+				CreationTimestamp time.Time                     `json:"creationTimestamp"`
 				OwnerReferences   []struct{ Kind, Name string } `json:"ownerReferences"`
-				Annotations       map[string]string `json:"annotations"`
+				Annotations       map[string]string             `json:"annotations"`
 			} `json:"metadata"`
 			Spec struct {
 				Template any `json:"template"`
@@ -261,7 +290,7 @@ func jsonLines(v any) []string {
 // run executes one kubectl invocation and returns stdout, folding stderr
 // into the error the same way Get does.
 func (r *Reader) run(ctx context.Context, args ...string) ([]byte, error) {
-	out, err := exec.CommandContext(ctx, r.bin, args...).Output()
+	out, err := exec.CommandContext(ctx, r.bin, r.args(args)...).Output()
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {

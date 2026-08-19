@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/kassvl/meshmedic/pkg/catalog"
+	"github.com/kassvl/meshmedic/pkg/kube"
 	"github.com/kassvl/meshmedic/pkg/prom"
 	"github.com/kassvl/meshmedic/pkg/proof"
 )
@@ -47,6 +48,7 @@ func main() {
 	list := fs.Bool("list", false, "list the entries that have a proof, and those that do not")
 	outDir := fs.String("out", "", "write each incident report under this directory")
 	yes := fs.Bool("yes-inject-faults", false, "acknowledge that this mutates the cluster it is pointed at")
+	kubeContext := fs.String("kube-context", os.Getenv("MESHMEDIC_KUBE_CONTEXT"), "kubeconfig context to read through; must be the cluster the inject commands target")
 	fs.Parse(os.Args[1:])
 
 	scenarios, err := catalog.LoadDir(*catalogDir)
@@ -104,7 +106,22 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	runner := proof.NewRunner(scenarios, prom.NewClient(*promURL))
+	// A proof without cluster reads cannot see configuration, log or rollout
+	// evidence, which is the entire deliverable of every triage entry. Failing
+	// here is right: a run that silently proves less than it claims is worse
+	// than a run that does not start.
+	reader, err := kube.NewReaderForContext(*kubeContext)
+	if err != nil {
+		fmt.Fprintf(os.Stderr,
+			"cannot read the cluster (%v).\nA proof without kubectl skips configuration, log and rollout evidence, so it would prove less than it claims.\n", err)
+		os.Exit(1)
+	}
+	if *kubeContext != "" {
+		logger.Printf("reading the cluster through context %s", *kubeContext)
+	} else {
+		logger.Printf("reading through kubectl's current context; pass --kube-context if the inject commands target a different cluster")
+	}
+	runner := proof.NewRunner(scenarios, prom.NewClient(*promURL), reader)
 
 	results := make([]proof.Result, 0, len(specs))
 	for i, sp := range specs {

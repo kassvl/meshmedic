@@ -1,0 +1,30 @@
+entry: rate-limit-throttling
+summary: >
+  A local rate limit on the payments waypoint set below live traffic, so real
+  callers are rejected with 429/RL. The fault is an EnvoyFilter applied only
+  for this proof; the healthy testbed has no rate limit.
+target:
+  service: payments
+  namespace: demo
+  workload: payments-v2
+  subset: v2
+  stable_subset: v1
+inject:
+  - desc: apply a rate limit below live traffic
+    run: [kubectl, --context=kind-meshmedic-demo, apply, -f, demo/manifests/rate-limit-fault.yaml]
+reset:
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, delete, envoyfilter, payments-local-ratelimit, --ignore-not-found]
+settle: 90s
+firesWithin: 6m
+resolvesWithin: 6m
+expect:
+  # Measured, not assumed. The first version of this proof expected `loadgen`
+  # and failed: the entry was right and the expectation was wrong. The rate
+  # limit sits on the payments waypoint, and the traffic hitting it comes
+  # through the ingress path (ingress-loadgen -> ingress-istio -> payments),
+  # so the caller the entry names is the gateway workload. The assertion is
+  # deliberately specific rather than a loose "names some caller": a proof
+  # that would pass on source_workload="unknown" is not checking the thing
+  # this entry exists to do.
+  names:
+    - source_workload="ingress-istio"

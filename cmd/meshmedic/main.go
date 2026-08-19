@@ -358,6 +358,9 @@ func runWatch(args []string) {
 	} else {
 		d.Objects = reader
 		d.Triage = reader
+		if kc := reader.Context(); kc != "" {
+			logger.Printf("reading configuration and triage evidence through kubeconfig context %s", kc)
+		}
 	}
 	if cfg.BaselineState != "" {
 		store := baseline.New(cfg.BaselineState, 0.05)

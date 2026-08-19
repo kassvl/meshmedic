@@ -1,0 +1,24 @@
+entry: canary-latency-rollback
+summary: >
+  The v2 canary is given a 1200ms p50, the shape of a bad canary that is slow
+  rather than erroring. The stable subset is untouched, so the entry has to
+  name the canary rather than the service.
+target:
+  service: payments
+  namespace: demo
+  workload: payments-v2
+  subset: v2
+  stable_subset: v1
+inject:
+  - desc: make the canary slow
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v2, TIMING_50_PERCENTILE=1200ms, TIMING_90_PERCENTILE=1500ms]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v2, --timeout=180s]
+reset:
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v2, TIMING_50_PERCENTILE=20ms, TIMING_90_PERCENTILE-]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v2, --timeout=180s]
+settle: 90s
+firesWithin: 6m
+resolvesWithin: 6m
+expect:
+  names:
+    - payments

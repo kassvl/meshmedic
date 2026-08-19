@@ -10,6 +10,7 @@ import (
 
 	"github.com/kassvl/meshmedic/pkg/catalog"
 	"github.com/kassvl/meshmedic/pkg/detect"
+	"github.com/kassvl/meshmedic/pkg/kube"
 	"github.com/kassvl/meshmedic/pkg/remediate"
 	"github.com/kassvl/meshmedic/pkg/report"
 )
@@ -54,14 +55,23 @@ type Runner struct {
 	// Sleep waits, injected so tests do not.
 	Sleep func(context.Context, time.Duration)
 
+	// Objects and Triage give the detector the same cluster reads the CLI
+	// wires. Nil means configuration, log and rollout evidence are skipped,
+	// which silently weakens every proof, so NewRunner sets them and the
+	// command fails loudly when it cannot.
+	Objects detect.ObjectReader
+	Triage  detect.TriageReader
+
 	// onIncident is swapped between the firing and resolving phases so both
 	// can share one detector, and therefore one state machine.
 	onIncident func(detect.Incident)
 }
 
-// NewRunner builds a runner with real command execution and a real clock.
-func NewRunner(scenarios []catalog.Scenario, q detect.Querier) *Runner {
-	return &Runner{
+// NewRunner builds a runner. reader supplies the cluster reads the detector
+// needs for configuration, log and rollout evidence; passing nil produces
+// proofs that cannot see any of it.
+func NewRunner(scenarios []catalog.Scenario, q detect.Querier, reader *kube.Reader) *Runner {
+	r := &Runner{
 		scenarios: scenarios,
 		prom:      q,
 		Exec:      execCommand,
@@ -70,6 +80,11 @@ func NewRunner(scenarios []catalog.Scenario, q detect.Querier) *Runner {
 		Poll:      10 * time.Second,
 		Sleep:     sleepCtx,
 	}
+	if reader != nil {
+		r.Objects = reader
+		r.Triage = reader
+	}
+	return r
 }
 
 func execCommand(ctx context.Context, argv []string) error {
@@ -306,5 +321,13 @@ func (r *Runner) detectorFor(s Spec) *detect.Detector {
 		})
 	d.Log = func(string, ...any) {}
 	d.Now = r.Now
+	// The prover must build the same detector the CLI does, or a proof is
+	// weaker than the thing it claims to prove. Without a cluster reader the
+	// detector silently skips configuration, log and rollout evidence, so a
+	// triage entry whose entire value is the client's own failure line and the
+	// rollout diff that caused it can fire, produce a dossier with none of it,
+	// and be marked as passing on metric evidence alone.
+	d.Objects = r.Objects
+	d.Triage = r.Triage
 	return d
 }

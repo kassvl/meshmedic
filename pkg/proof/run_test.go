@@ -68,7 +68,7 @@ func harness(t *testing.T, scenarios []catalog.Scenario, p *fakeProm) (*Runner, 
 	if p != nil {
 		q = p
 	}
-	r := NewRunner(scenarios, q)
+	r := NewRunner(scenarios, q, nil)
 	r.Now = func() time.Time { return now }
 	r.Sleep = func(_ context.Context, d time.Duration) { now = now.Add(d) }
 	r.Poll = 10 * time.Second

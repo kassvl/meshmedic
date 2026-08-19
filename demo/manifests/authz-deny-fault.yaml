@@ -1,0 +1,19 @@
+# Fault, not part of the healthy testbed. A DENY policy that blocks the very
+# caller the demo relies on, which is the ordinary shape of this incident: a
+# policy written to lock something down that turns out to be broader than the
+# author believed.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: payments-block-loadgen
+  namespace: demo
+spec:
+  targetRefs:
+    - group: ""
+      kind: Service
+      name: payments
+  action: DENY
+  rules:
+    - from:
+        - source:
+            principals: ["cluster.local/ns/demo/sa/default"]
