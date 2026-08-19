@@ -40,6 +40,29 @@ when the fault was removed.
 | `traffic-vanished-triage` | 1m40s | `loadgen`, its NXDOMAIN log line, and the rollout diff | not checked |
 | `upstream-dependency-errors` | 1m5s | `ledger` at 3.708 rps | 1m45s |
 | `upstream-dependency-latency` | 1m30s | `ledger` at 495.6ms p99 | 2m5s |
+| `latency-regression-vs-baseline` | 1m32s | `v1` at 987.7ms against a healthy `v2` at 95.7ms | 2m2s |
+| `mtls-policy-conflict-ambient` | 1m45s | the denied caller with no mesh identity | 1m50s |
+| `external-authz-denial` | 1m3s | the caller refused by the external service | 1m45s |
+| `ingress-edge-outage` | 1m5s | `ingress-istio` returning 5xx at the front door | 1m45s |
+| `upstream-host-ejection-flood` | 1m7s | `payments` with no reachable endpoints | 2m12s |
+| `no-route-blackhole` | 1m4s | `loadgen`, the black-holed caller | 1m45s |
+| `connection-pool-overflow` | 1m4s | `payments` shedding load at the pool limit | 1m56s |
+
+`latency-regression-vs-baseline` is the one worth reading in full. It fired at
+993.7ms against a threshold of 590.8, which is three times the 196.9ms it had
+learned as this cluster's normal during a five-minute warm-up. A static 1000ms
+threshold would have missed it by six milliseconds, which is the entire reason
+the entry exists.
+
+Getting that proof to run took four attempts and the first three were the same
+mistake: the fault went on the canary subset, which carries 20 percent of
+traffic, so it barely moved the service-wide signal the entry reads. Sizing it
+up ran into the other wall, because a canary slow enough to move that signal
+also trips `canary-latency-rollback`, which suppresses this entry. The fix was
+not a bigger number but a different place: the stable subset carries 80 percent
+of traffic and is invisible to the canary entry's `destination_version=v2`
+filter, so slowing it moves this signal hard and cannot bring the suppressor
+into breach at all.
 
 Two suppressions were proven rather than asserted.
 `upstream-dependency-errors` kept `error-surge-outlier-ejection` quiet while
@@ -48,8 +71,9 @@ healthy front service was not blamed. `canary-latency-rollback` kept
 `latency-regression-vs-baseline` quiet, a suppression that did not exist until
 these runs found the two firing together.
 
-Ten of nineteen entries still have no proof. `meshmedic-prove --list` prints
-the inventory and says so.
+Every catalog entry now has either a proof or a declared reason it cannot have
+one. `meshmedic-prove --list` prints the inventory: 16 proven, 3 declared
+unprovable with a measurement behind each, 0 silently missing.
 
 ## Running these yourself
 

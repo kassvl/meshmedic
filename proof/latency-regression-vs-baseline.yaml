@@ -5,14 +5,20 @@ summary: >
   the result is abnormal for this cluster and invisible to any fixed SLO, so a
   relative threshold catches what a static 1000ms number would miss entirely.
 
-  The 350 is measured rather than picked. This service calls a downstream
-  ledger on every request, so its healthy p99 is 169.9ms, not the tens of
-  milliseconds the workload alone would suggest, which puts the 3x threshold at
-  509.7ms. A 250ms injection produced 486ms and correctly did not fire, which
-  cost two run cycles to diagnose and is why the prover now logs the learned
-  normal and the threshold it puts in force. 350ms clears 510 with room while
-  leaving the canary subset near 700ms, comfortably under the 1000ms that would
-  bring canary-latency-rollback into breach and suppress the entry under test.
+  The fault goes on the stable subset, not the canary, and that is the design
+  rather than an accident. canary-latency-rollback keys on
+  destination_version=v2 while this entry reads the service as a whole, so
+  slowing v1 moves this signal and leaves the canary's untouched. There is then
+  no ceiling to work under, because the entry that would suppress this one
+  cannot come into breach at all.
+
+  It also makes the fault effective instead of marginal. v1 carries 80 percent
+  of traffic, so a regression there lifts the service p99 directly, while the
+  same regression on the 20 percent canary barely reaches the threshold: two
+  runs sized against the canary produced 486ms against a 509.7ms threshold and
+  then failed again against a 625.3ms one, because the learned normal itself
+  moved 169.9 to 208.4 between windows. Chasing that number was the wrong
+  answer; moving the fault to where the traffic is was the right one.
 target:
   service: payments
   namespace: demo
@@ -23,12 +29,12 @@ target:
 # the detector trusts the learned normal instead of falling back to 1000ms.
 warmup: 5m
 inject:
-  - desc: a regression that is large for this cluster and small for an SLO
-    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v2, TIMING_50_PERCENTILE=350ms]
-  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v2, --timeout=180s]
+  - desc: slow the stable subset, which carries most of the traffic
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v1, TIMING_50_PERCENTILE=500ms]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v1, --timeout=180s]
 reset:
-  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v2, TIMING_50_PERCENTILE=20ms]
-  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v2, --timeout=180s]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v1, TIMING_50_PERCENTILE=20ms]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v1, --timeout=180s]
 settle: 90s
 firesWithin: 6m
 resolvesWithin: 6m
