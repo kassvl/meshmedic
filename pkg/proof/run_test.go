@@ -747,12 +747,37 @@ func TestWarmupLearnsFromTheFloorNotTheDecayingTail(t *testing.T) {
 	if g.rejected == 0 {
 		t.Error("nothing was rejected, so the gate did nothing")
 	}
+	// Enough must survive to satisfy a baselineMinSamples of 20 over a real
+	// window. Anchoring on the minimum accepted 2 of 30 on the live testbed,
+	// which left the entry with no usable baseline at all.
+	if len(got) < len(g.seen["k"])/2 {
+		t.Errorf("accepted only %d of %d readings; a warm-up that discards most of its window cannot reach baselineMinSamples", len(got), len(g.seen["k"]))
+	}
 	t.Logf("accepted %d, rejected %d, learned %v", g.accepted, g.rejected, got)
 }
 
 // A cluster that is quiet from the start must not have its readings thrown
 // away: the gate is a guard against a decaying start, not a filter that only
 // likes the very first number.
+// A single unusually quiet scrape must not become the anchor. A p99 quantile
+// is noisy, and a tolerance band anchored on the lowest reading rejects every
+// honest one around it: measured live, 2 readings accepted out of 30.
+func TestWarmupIsNotDerailedByOneLowOutlier(t *testing.T) {
+	inner := &countingStore{vals: map[string][]float64{}}
+	g := &floorCollector{inner: inner, tolerance: 1.5}
+
+	vals := []float64{50, 52, 48, 5, 55, 47, 51, 53, 49, 50, 52, 48}
+	for _, v := range vals {
+		g.Observe("k", v)
+	}
+	g.commit()
+
+	if len(inner.vals["k"]) < len(vals)-2 {
+		t.Errorf("accepted %d of %d readings; one 5ms outlier must not reject the rest",
+			len(inner.vals["k"]), len(vals))
+	}
+}
+
 func TestWarmupAcceptsAQuietClusterThroughout(t *testing.T) {
 	inner := &countingStore{vals: map[string][]float64{}}
 	g := &floorCollector{inner: inner, tolerance: 1.5}

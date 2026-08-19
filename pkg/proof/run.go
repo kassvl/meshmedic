@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"os/exec"
 	"sort"
 	"strings"
@@ -626,15 +625,35 @@ func (c *floorCollector) Observe(key string, value float64) {
 // that has not been established yet.
 func (c *floorCollector) Baseline(string, int) (float64, bool) { return 0, false }
 
-// commit teaches the real store the readings near each key's floor.
+// median is the robust centre of the warm-up window. With a window long
+// enough for the cluster to settle, most readings are the settled value, so
+// the median is one of them regardless of how elevated the start was.
+func median(vals []float64) float64 {
+	if len(vals) == 0 {
+		return 0
+	}
+	sorted := append([]float64(nil), vals...)
+	sort.Float64s(sorted)
+	mid := len(sorted) / 2
+	if len(sorted)%2 == 1 {
+		return sorted[mid]
+	}
+	return (sorted[mid-1] + sorted[mid]) / 2
+}
+
+// commit teaches the real store the readings near each key's typical value.
+//
+// The typical value is the median, not the minimum, and that distinction is
+// the whole correctness of this thing. A p99 histogram quantile is noisy: one
+// unusually quiet scrape drags the minimum far below the real floor, and a
+// tolerance band anchored there rejects every honest reading around it.
+// Measured: anchored on the minimum, a five-minute warm-up accepted 2 readings
+// out of 30 and rejected 28, leaving the baseline below the sample count it
+// needed and the entry falling back to a static threshold it could never
+// reach. The median is robust to both the decaying head and the low outlier.
 func (c *floorCollector) commit() {
 	for key, vals := range c.seen {
-		floor := math.Inf(1)
-		for _, v := range vals {
-			if v < floor {
-				floor = v
-			}
-		}
+		floor := median(vals)
 		for _, v := range vals {
 			if floor > 0 && v > floor*c.tolerance {
 				c.rejected++
