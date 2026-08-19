@@ -31,7 +31,11 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
 FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=build /out/meshmedic /usr/local/bin/meshmedic
-COPY catalog/ /etc/meshmedic/catalog/
+COPY --chmod=0755 catalog/ /etc/meshmedic/catalog/
+# The lock travels with the catalog it locks. Without it every entry is
+# unlocked and the image detects nothing at all, which is the correct
+# behaviour for an unreviewed catalog and a useless one to ship.
+COPY --chmod=0644 catalog.lock /etc/meshmedic/catalog.lock
 
 ENV MESHMEDIC_CATALOG=/etc/meshmedic/catalog
 

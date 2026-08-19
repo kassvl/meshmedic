@@ -34,6 +34,9 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - catalog/**/*
+      # Without the lock every entry is unlocked and the binary detects
+      # nothing; the two ship together or not at all.
+      - catalog.lock
       - README.md
       - LICENSE
       - CHANGELOG.md
