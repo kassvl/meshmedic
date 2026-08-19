@@ -1,0 +1,64 @@
+version: 2
+
+project_name: meshmedic
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+    # A release whose catalog does not load is worse than no release.
+    - go run ./cmd/meshmedic validate
+
+builds:
+  - id: meshmedic
+    main: ./cmd/meshmedic
+    binary: meshmedic
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  # The catalog travels with the binary. It is the reviewable artifact the
+  # engine reads at startup, so a binary shipped without it is not runnable.
+  - id: meshmedic
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - catalog/**/*
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+release:
+  prerelease: auto
+  footer: |
+    ## Quickest way in
+
+    Against a Prometheus you already run, no config file and no testbed:
+
+    ```console
+    $ docker run --rm --network host ghcr.io/kassvl/meshmedic:{{ .Tag }} \
+        watch --prometheus http://localhost:9090 \
+              --target service=payments,namespace=demo
+    ```

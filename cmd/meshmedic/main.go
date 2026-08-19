@@ -31,6 +31,11 @@ import (
 	"github.com/kassvl/meshmedic/pkg/report"
 )
 
+// version is stamped at build time (-ldflags "-X main.version=..."). The
+// default matters: a report or a lock file written by an unversioned build
+// should say so rather than claim a release it is not.
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -43,6 +48,8 @@ func main() {
 		runRender(os.Args[2:])
 	case "watch":
 		runWatch(os.Args[2:])
+	case "version", "--version", "-v":
+		fmt.Println("meshmedic", version)
 	default:
 		usage()
 		os.Exit(2)
@@ -53,12 +60,32 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `usage:
   meshmedic validate [--catalog dir]
   meshmedic render --scenario id --set key=value [--set ...] [--catalog dir]
-  meshmedic watch --config watch.yaml [--catalog dir]`)
+  meshmedic watch --config watch.yaml [--catalog dir]
+  meshmedic watch --prometheus URL --target k=v,k=v [--target ...] [--interval 30s]
+
+The second watch form needs no config file, which is the quickest way to point
+MeshMedic at a Prometheus you already run:
+
+  meshmedic watch --prometheus http://localhost:9090 \
+      --target service=payments,namespace=demo,workload=payments-v2
+
+The catalog directory defaults to ./catalog, or $MESHMEDIC_CATALOG when set.`)
+}
+
+// defaultCatalogDir resolves where the catalog lives when --catalog is not
+// given. The environment variable is what lets a container image bake the
+// catalog in at a fixed path and stay correct regardless of the working
+// directory the user runs it from.
+func defaultCatalogDir() string {
+	if dir := os.Getenv("MESHMEDIC_CATALOG"); dir != "" {
+		return dir
+	}
+	return "catalog"
 }
 
 func runValidate(args []string) {
 	fs := flag.NewFlagSet("validate", flag.ExitOnError)
-	dir := fs.String("catalog", "catalog", "catalog directory")
+	dir := fs.String("catalog", defaultCatalogDir(), "catalog directory (or $MESHMEDIC_CATALOG)")
 	fs.Parse(args)
 
 	scenarios, err := catalog.LoadDir(*dir)
@@ -77,7 +104,7 @@ func runValidate(args []string) {
 
 func runRender(args []string) {
 	fs := flag.NewFlagSet("render", flag.ExitOnError)
-	dir := fs.String("catalog", "catalog", "catalog directory")
+	dir := fs.String("catalog", defaultCatalogDir(), "catalog directory (or $MESHMEDIC_CATALOG)")
 	id := fs.String("scenario", "", "scenario id")
 	var sets multiFlag
 	fs.Var(&sets, "set", "template parameter, key=value (repeatable)")
@@ -120,8 +147,12 @@ func runRender(args []string) {
 
 func runWatch(args []string) {
 	fs := flag.NewFlagSet("watch", flag.ExitOnError)
-	dir := fs.String("catalog", "catalog", "catalog directory")
-	cfgPath := fs.String("config", "watch.yaml", "watch config file")
+	dir := fs.String("catalog", defaultCatalogDir(), "catalog directory (or $MESHMEDIC_CATALOG)")
+	cfgPath := fs.String("config", "", "watch config file (default watch.yaml when --prometheus is not given)")
+	promURL := fs.String("prometheus", "", "Prometheus base URL; with --target this replaces the config file")
+	interval := fs.String("interval", "", "evaluation interval, e.g. 30s (flag form only)")
+	var targets multiFlag
+	fs.Var(&targets, "target", "target params as key=value,key=value (repeatable, flag form only)")
 	fs.Parse(args)
 
 	scenarios, err := catalog.LoadDir(*dir)
@@ -129,7 +160,28 @@ func runWatch(args []string) {
 		fmt.Fprintln(os.Stderr, "catalog invalid:", err)
 		os.Exit(1)
 	}
-	cfg, err := detect.LoadConfig(*cfgPath)
+
+	// Two ways in: a config file for the full feature set, or flags for the
+	// quickest possible first run against a Prometheus that already exists.
+	var cfg detect.Config
+	switch {
+	case *promURL != "":
+		if *cfgPath != "" {
+			fmt.Fprintln(os.Stderr, "--config and --prometheus are alternatives; pass one")
+			os.Exit(2)
+		}
+		cfg, err = detect.ConfigFromFlags(*promURL, *interval, targets)
+	default:
+		path := *cfgPath
+		if path == "" {
+			path = "watch.yaml"
+		}
+		if len(targets) > 0 || *interval != "" {
+			fmt.Fprintln(os.Stderr, "--target and --interval belong to the --prometheus form; put them in the config file instead")
+			os.Exit(2)
+		}
+		cfg, err = detect.LoadConfig(path)
+	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "config invalid:", err)
 		os.Exit(1)

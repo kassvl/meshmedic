@@ -32,7 +32,9 @@ $ ./scripts/inject-canary-latency.sh
 $ ./scripts/heal-canary.sh         # reset for the next take
 ```
 
-Still missing for the video: a Grafana dashboard for the two panels in
-shot 1, and the recording itself. The storyboard is the acceptance test:
-if a step cannot be shown in its time slot, the component behind it is
-not done.
+Both remaining pieces are now done: the Grafana dashboard for shot 1
+(`demo/scripts/04-grafana.sh`, `demo/grafana-dashboard.json`) and the
+recording itself (`demo/video/meshmedic-demo.mp4`, every frame from the real
+episode logged in `demo/video/record-run.log`). The storyboard stays the
+acceptance test: if a step cannot be shown in its time slot, the component
+behind it is not done.

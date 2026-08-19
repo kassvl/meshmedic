@@ -4,6 +4,27 @@ Deterministic first responder for service-mesh incidents: it detects in
 seconds, opens an evidence-dossier pull request, and does it with zero LLM
 and zero cluster mutation.
 
+## Run it
+
+Against a Prometheus you already run. No config file, no demo cluster, nothing
+to install but a container runtime:
+
+```console
+$ docker run --rm --network host ghcr.io/kassvl/meshmedic:latest \
+    watch --prometheus http://localhost:9090 \
+          --target service=payments,namespace=demo
+meshmedic: watching 19 scenarios for 1 targets against http://localhost:9090 every 30s
+```
+
+It evaluates every catalog signal against that target and prints the incident
+report — diagnosis, labeled evidence, the rendered patch, the rollback note —
+the moment one fires. Nothing is written to your cluster; MeshMedic holds no
+write credentials at all.
+
+Prefer a binary? `go install github.com/kassvl/meshmedic/cmd/meshmedic@latest`,
+or take a [release archive](https://github.com/kassvl/meshmedic/releases)
+(linux and macOS, amd64 and arm64). Both carry the catalog the engine reads.
+
 ![MeshMedic demo: chaos to merged PR to healed mesh](demo/video/meshmedic-demo.gif)
 
 *Every frame above is real: a live kind + Istio ambient mesh, a real latency
@@ -137,35 +158,40 @@ Some entries exist because the usual signals are silent:
   source: the report names the black-holed caller and lists the namespace's
   VirtualServices, so the over-narrow or removed route is visible.
 
-## Try it
+## Configuring more than one target
 
 MeshMedic is a single Go binary plus the reviewable `catalog/` directory it
-reads at startup (`--catalog` points it elsewhere). With Go 1.26+ installed:
+reads at startup (`--catalog`, or `MESHMEDIC_CATALOG`, points it elsewhere).
+The flag form above is the fast path for one target; a config file is how you
+watch several, tune the interval, and turn on the features below.
 
 ```console
-$ git clone https://github.com/kassvl/meshmedic.git && cd meshmedic
-$ go run ./cmd/meshmedic validate
-ID                            SEVERITY  TARGET              TITLE
-canary-latency-rollback       critical  VirtualService      Canary subset latency regression
-...
+$ meshmedic validate                       # what the engine knows how to fix
 catalog OK: 19 scenarios
+$ meshmedic watch --config examples/watch.yaml
 ```
 
-Point the detector at a Prometheus and it evaluates every catalog signal for
-the targets you configure, holding each breach for the scenario's `for`
-duration before it fires. When one fires, it prints the incident report the
-PR opener uses as the pull request body: diagnosis, evidence table, the
-rendered patch, and the rollback note.
+Each target is a set of template parameters. Every catalog signal is evaluated
+against it, and a breach must hold for the scenario's `for` duration before it
+fires — the discipline that keeps thresholds from chasing noise.
 
-```console
-$ go run ./cmd/meshmedic watch --config examples/watch.yaml
-meshmedic: watching 19 scenarios for 1 targets against http://localhost:9090 every 30s
+```yaml
+prometheus: http://localhost:9090
+interval: 30s
+targets:
+  - params:
+      service: payments
+      namespace: demo
+      workload: payments-v2
+      subset: v2
+      stable_subset: v1
 ```
 
-Add a `gitops` section to the config and set `MESHMEDIC_GITHUB_TOKEN` (or
-`GITHUB_TOKEN`), and firing turns into a pull request instead of only a
-report: a branch named after the episode, one commit with the patch file,
-and the incident report as the PR body.
+Add a `gitops` section and set `MESHMEDIC_GITHUB_TOKEN` (or `GITHUB_TOKEN`),
+and firing turns into a pull request instead of only a report: a branch named
+after the episode, one commit with the patch file, and the incident report as
+the PR body. This is deliberately config-file-only — write access to a
+repository should not be reachable from a flag pasted out of a README.
 
 ```yaml
 gitops:
