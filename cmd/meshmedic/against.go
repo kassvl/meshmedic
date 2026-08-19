@@ -209,12 +209,20 @@ func checkSeries(ctx context.Context, client *prom.Client, s catalog.Scenario, p
 		}
 	}
 
-	for _, metric := range refs.Metrics {
-		probe := targetProbe(metric, refs.Matchers, paramValues)
+	// Probe each selector with only its own matchers. Applying one selector's
+	// matchers to another metric is how a healthy metric gets reported dead:
+	// waypoint-overload-scale joins istio_requests_total to
+	// kube_pod_status_ready, and the kube selector's `pod` matcher names a
+	// label the Istio metric does not have.
+	for _, sel := range refs.Selectors {
+		if sel.Metric == "" {
+			continue
+		}
+		probe := targetProbe(sel.Metric, sel.Matchers, paramValues)
 		samples, err := client.QuerySeries(ctx, probe)
 		if errors.Is(err, prom.ErrNoData) || (err == nil && len(samples) == 0) {
 			r.Status = checkNoSeries
-			r.Missing = []string{fmt.Sprintf("%s carries no series for %s", metric, describeTarget(params))}
+			r.Missing = []string{fmt.Sprintf("%s carries no series for %s", sel.Metric, describeTarget(params))}
 			return r
 		}
 	}

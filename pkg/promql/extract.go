@@ -62,10 +62,20 @@ type Matcher struct {
 type Refs struct {
 	Metrics []string // metric names, sorted and deduplicated
 	Labels  []string // label keys referenced by matchers or grouping
-	// Matchers are the label matchers as written, which lets a caller tell a
-	// selector that identifies a target (namespace, service) apart from one
-	// that describes a failure (response_code, response_flags). The first
-	// kind must resolve to series on a healthy cluster; the second must not.
+	// Matchers are every label matcher in the query, flattened.
+	Matchers []Matcher
+	// Selectors keeps each metric with the matchers written against it.
+	// Flattening loses this, and losing it is a real bug: a query joining
+	// istio_requests_total to kube_pod_status_ready would otherwise have the
+	// kube selector's `pod` matcher applied to the Istio metric, which has no
+	// such label, and the probe would come back empty for a metric that is
+	// perfectly healthy.
+	Selectors []Selector
+}
+
+// Selector is one metric with the matchers written against it.
+type Selector struct {
+	Metric   string
 	Matchers []Matcher
 }
 
@@ -78,6 +88,10 @@ func Extract(query string) (Refs, error) {
 	metrics := map[string]bool{}
 	labels := map[string]bool{}
 	var matchers []Matcher
+	var selectors []Selector
+	// current is the selector being filled: the metric named immediately
+	// before the brace, or the one named by an inner __name__ matcher.
+	var current *Selector
 
 	depth := 0   // brace nesting: inside {} we are in a label matcher list
 	bracket := 0 // bracket nesting: inside [] is a range or subquery step
@@ -101,9 +115,22 @@ func Extract(query string) (Refs, error) {
 			// otherwise lex as the start of an identifier.
 		case tk.kind == punct && tk.text == "{":
 			depth++
+			if depth == 1 {
+				// The metric this selector belongs to is the identifier just
+				// before the brace, if there is one.
+				name := ""
+				if prev := peek(toks, i-1); prev != nil && prev.kind == ident && metrics[prev.text] {
+					name = prev.text
+				}
+				selectors = append(selectors, Selector{Metric: name})
+				current = &selectors[len(selectors)-1]
+			}
 		case tk.kind == punct && tk.text == "}":
 			if depth > 0 {
 				depth--
+			}
+			if depth == 0 {
+				current = nil
 			}
 		case tk.kind == ident && depth > 0:
 			// Inside a selector: an identifier followed by a matcher operator
@@ -117,7 +144,11 @@ func Extract(query string) (Refs, error) {
 				}
 				labels[tk.text] = true
 				if v := peek(toks, i+2); v != nil && v.kind == str {
-					matchers = append(matchers, Matcher{Label: tk.text, Op: next.text, Value: v.text})
+					m := Matcher{Label: tk.text, Op: next.text, Value: v.text}
+					matchers = append(matchers, m)
+					if current != nil {
+						current.Matchers = append(current.Matchers, m)
+					}
 				}
 			}
 		case tk.kind == ident && depth == 0:
@@ -141,7 +172,8 @@ func Extract(query string) (Refs, error) {
 			metrics[tk.text] = true
 		}
 	}
-	return Refs{Metrics: sortedKeys(metrics), Labels: sortedKeys(labels), Matchers: matchers}, nil
+	return Refs{Metrics: sortedKeys(metrics), Labels: sortedKeys(labels),
+		Matchers: matchers, Selectors: selectors}, nil
 }
 
 // collectGrouping reads the parenthesised label list following a grouping
