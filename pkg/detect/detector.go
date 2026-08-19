@@ -34,6 +34,10 @@ type Querier interface {
 type Target struct {
 	Params    map[string]string `yaml:"params"`
 	Scenarios []string          `yaml:"scenarios"` // empty means every scenario
+	// CoverageProbe overrides the control query that decides whether this
+	// target is visible at all. Empty falls back to the detector's probe and
+	// then to DefaultCoverageProbe.
+	CoverageProbe string `yaml:"coverageProbe"`
 }
 
 func (t Target) wants(id string) bool {
@@ -208,6 +212,20 @@ type Detector struct {
 	// reports; detection is identical either way.
 	OnResolve ResolveFunc
 
+	// CoverageProbe is the default control query proving a target is visible,
+	// used for any target that does not set its own. Empty falls back to
+	// DefaultCoverageProbe.
+	CoverageProbe string
+
+	// OnCycle, when set, receives the summary of every completed pass over
+	// all targets. The CLI uses it to print the coverage line each cycle.
+	OnCycle func(Cycle)
+
+	// StateFile is where the incident lifecycle is persisted between ticks.
+	// Empty disables persistence, which means a restart re-opens every
+	// still-breaching incident.
+	StateFile string
+
 	// Log receives non-fatal evaluation problems (template errors, query
 	// failures). Defaults to discarding them; the CLI wires it to stderr.
 	Log func(format string, args ...any)
@@ -237,6 +255,13 @@ func (d *Detector) Run(ctx context.Context, interval time.Duration) {
 				d.Log("baseline: save: %v", err)
 			}
 		}
+		// Persist the incident lifecycle too, for the same reason and a
+		// sharper one: without it a restart re-opens every still-breaching
+		// incident, and in GitOps mode that is a second pull request for an
+		// incident already under review.
+		if err := d.SaveState(d.StateFile); err != nil {
+			d.Log("state: save: %v", err)
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -252,8 +277,9 @@ func (d *Detector) Run(ctx context.Context, interval time.Duration) {
 // machine, then cascade suppression is decided across the whole target, and
 // only unsuppressed incidents are delivered. A suppressed scenario stays
 // pending, so it still fires later if its suppressor clears first.
-func (d *Detector) Tick(ctx context.Context, now time.Time) {
-	for ti, t := range d.targets {
+func (d *Detector) Tick(ctx context.Context, now time.Time) Cycle {
+	cycle := Cycle{Started: now}
+	for _, t := range d.targets {
 		type dueIncident struct {
 			key   string
 			s     catalog.Scenario
@@ -261,14 +287,50 @@ func (d *Detector) Tick(ctx context.Context, now time.Time) {
 		}
 		var due []dueIncident
 		inBreach := map[string]bool{}
+
+		// Coverage probe first. It answers the only question that makes the
+		// rest of the cycle meaningful: can this tool see this target at all?
+		// A target that fails it is unobserved, and every scenario against it
+		// reports blind rather than clear, because silence from a blind
+		// detector is not a finding.
+		observed, probeReason := d.probeCoverage(ctx, t)
+		if observed {
+			cycle.Observed++
+		} else {
+			cycle.Unobserved++
+			cycle.UnobservedTargets = append(cycle.UnobservedTargets, t.Params)
+			d.Log("target %s is unobserved: %s", formatParams(t.Params), probeReason)
+		}
+
 		for _, s := range d.scenarios {
 			if !t.wants(s.ID) {
 				continue
 			}
-			key := fmt.Sprintf("%d/%s", ti, s.ID)
-			value, isDue := d.evaluateSignal(ctx, now, key, t, s)
+			key := targetKey(s.ID, t.Params)
+
+			if !observed {
+				// The scenario cannot be evaluated honestly, and this
+				// includes the absence-is-signal entries. Their flag changes
+				// what an empty *scenario* result means once the target is
+				// known to be visible; it does not license firing an outage
+				// out of our own blindness. Distinguishing "the traffic
+				// stopped" from "we cannot see this target" is precisely the
+				// coverage probe's job, and it just answered the latter.
+				//
+				// Clear any pending progress too, so a breach measured while
+				// blind cannot mature into an incident once sight returns.
+				if st := d.states[key]; st != nil && st.state == pending {
+					st.state, st.since = inactive, time.Time{}
+				}
+				cycle.record(Evaluation{Scenario: s.ID, Params: t.Params,
+					Outcome: OutcomeBlind, Reason: "target unobserved: " + probeReason})
+				continue
+			}
+
+			ev, isDue := d.evaluateSignal(ctx, now, key, t, s)
+			cycle.record(ev)
 			if isDue {
-				due = append(due, dueIncident{key, s, value})
+				due = append(due, dueIncident{key, s, ev.Value})
 			}
 			if d.states[key].state != inactive {
 				inBreach[s.ID] = true
@@ -303,12 +365,65 @@ func (d *Detector) Tick(ctx context.Context, now time.Time) {
 			d.deliver(ctx, du.key, du.s, t, du.value)
 		}
 	}
+	if d.OnCycle != nil {
+		d.OnCycle(cycle)
+	}
+	return cycle
+}
+
+// record files one evaluation into the cycle summary and counts its outcome.
+func (c *Cycle) record(ev Evaluation) {
+	c.Evaluations = append(c.Evaluations, ev)
+	switch ev.Outcome {
+	case OutcomeFiring:
+		c.Firing++
+	case OutcomeClear:
+		c.Clear++
+	case OutcomeBlind:
+		c.Blind++
+	case OutcomeUnlocked:
+		c.Unlocked++
+	}
+}
+
+// probeCoverage asks whether this target resolves to any series in base mesh
+// telemetry. It is deliberately a different query from any scenario signal:
+// a scenario returning nothing is ambiguous (the failure may be exactly that
+// traffic stopped), while the probe returning nothing means the tool cannot
+// see the target at all. That distinction is what lets an absence-based
+// entry like traffic-vanished-triage keep working without the detector ever
+// having to guess which kind of silence it is looking at.
+func (d *Detector) probeCoverage(ctx context.Context, t Target) (bool, string) {
+	tmpl := t.CoverageProbe
+	if tmpl == "" {
+		tmpl = d.CoverageProbe
+	}
+	if tmpl == "" {
+		tmpl = DefaultCoverageProbe
+	}
+	query, err := renderQuery("coverage-probe", tmpl, t.Params)
+	if err != nil {
+		// A probe that cannot be rendered cannot prove anything. Saying so is
+		// the honest outcome; setting coverageProbe on the target fixes it.
+		return false, fmt.Sprintf("coverage probe does not render for this target: %v", err)
+	}
+	samples, err := d.querier.QuerySeries(ctx, query)
+	switch {
+	case errors.Is(err, prom.ErrNoData):
+		return false, "coverage probe returned no series: no mesh telemetry for this target"
+	case err != nil:
+		return false, fmt.Sprintf("coverage probe failed: %v", err)
+	case len(samples) == 0:
+		return false, "coverage probe returned an empty result"
+	}
+	return true, ""
 }
 
 // evaluateSignal advances one scenario's state machine and reports whether
 // its incident is due this tick. Delivery happens in Tick, after cascade
 // suppression is decided across the target.
-func (d *Detector) evaluateSignal(ctx context.Context, now time.Time, key string, t Target, s catalog.Scenario) (float64, bool) {
+func (d *Detector) evaluateSignal(ctx context.Context, now time.Time, key string, t Target, s catalog.Scenario) (Evaluation, bool) {
+	ev := Evaluation{Scenario: s.ID, Params: t.Params}
 	st := d.states[key]
 	if st == nil {
 		st = &entry{}
@@ -320,31 +435,49 @@ func (d *Detector) evaluateSignal(ctx context.Context, now time.Time, key string
 		// A target that lacks a param the signal template needs is not an
 		// error: the scenario does not apply to that target (an ingress
 		// entry evaluated for a plain service target, say). Report it once
-		// and stay quiet afterwards.
+		// and stay quiet afterwards. It is not counted as an outcome at all,
+		// because a scenario that does not apply was never a question.
 		if strings.Contains(err.Error(), "map has no entry for key") {
 			if !st.paramSkipLogged {
 				d.Log("%s: not applicable to this target, signal needs a param the target does not define: %v", key, err)
 				st.paramSkipLogged = true
 			}
-			return 0, false
+			ev.Outcome = OutcomeNotApplicable
+			return ev, false
 		}
 		d.Log("%s: rendering signal: %v", key, err)
-		return 0, false
+		ev.Outcome, ev.Reason = OutcomeBlind, "signal template does not render: "+err.Error()
+		return ev, false
 	}
 	value, err := d.querier.Query(ctx, query)
 	switch {
 	case errors.Is(err, prom.ErrNoData):
-		// No traffic clears any progress but is not a recovery: a firing
-		// incident going quiet could be the service scaled to zero or fully
-		// down, not fixed, so state resets without a resolution report.
-		st.state, st.since = inactive, time.Time{}
-		return 0, false
+		// An empty result and a zero value are different facts and stay
+		// different all the way to the report. For an ordinary entry an
+		// empty result means the signal could not be measured: blind, not
+		// clear. Any pending progress is cleared, because a breach we
+		// stopped being able to see must not mature into an incident.
+		//
+		// For an entry that declares absence is its signal, an empty result
+		// is a legitimate zero and flows on into the threshold comparison.
+		// The coverage probe has already established that the target is
+		// visible, so this really is "the traffic stopped", not "we went
+		// blind".
+		if !s.Signal.AbsenceIsSignal {
+			st.state, st.since = inactive, time.Time{}
+			ev.Outcome, ev.Reason = OutcomeBlind, "signal returned no series"
+			return ev, false
+		}
+		value = 0
 	case err != nil:
-		// A transient scrape failure must not reset a pending breach,
-		// so the state survives the error untouched.
+		// A transient scrape failure must not reset a pending breach, so the
+		// state survives the error untouched. It is still blind: we did not
+		// get an answer this cycle and must not report one.
 		d.Log("%s: query: %v", key, err)
-		return 0, false
+		ev.Outcome, ev.Reason = OutcomeBlind, "signal query failed: "+err.Error()
+		return ev, false
 	}
+	ev.Value = value
 
 	threshold := d.effectiveThreshold(s, t)
 	if !breached(value, s.Signal.Comparison, threshold) {
@@ -360,11 +493,16 @@ func (d *Detector) evaluateSignal(ctx context.Context, now time.Time, key string
 		// ongoing incident can never drift the learned normal upward and
 		// silence itself.
 		if d.Baseline != nil && s.Signal.BaselineMultiplier > 0 {
-			d.Baseline.Observe(baselineKey(s.ID, t.Params), value)
+			d.Baseline.Observe(targetKey(s.ID, t.Params), value)
 		}
-		return value, false
+		ev.Outcome = OutcomeClear
+		return ev, false
 	}
 
+	// The signal is in breach. Whether it is an incident yet depends on the
+	// for-duration; either way the honest outcome is firing, because the
+	// threshold comparison returned a real answer.
+	ev.Outcome = OutcomeFiring
 	switch st.state {
 	case inactive:
 		st.state, st.since = pending, now
@@ -373,12 +511,12 @@ func (d *Detector) evaluateSignal(ctx context.Context, now time.Time, key string
 		fallthrough
 	case pending:
 		if now.Sub(st.since) >= forDuration(s) {
-			return value, true
+			return ev, true
 		}
 	case firing:
 		// Already delivered; stay quiet until the condition clears.
 	}
-	return value, false
+	return ev, false
 }
 
 // watchAnomaly evaluates one generic anomaly signal for a target. It records
@@ -405,7 +543,7 @@ func (d *Detector) watchAnomaly(ctx context.Context, t Target, w catalog.Query, 
 	if minSamples <= 0 {
 		minSamples = 20
 	}
-	key := baselineKey("anomaly-"+w.Name, t.Params)
+	key := targetKey("anomaly-"+w.Name, t.Params)
 	base, ready := d.Baseline.Baseline(key, minSamples)
 	deviating := ready && base > 0 && (value > base*factor || value < base/factor)
 
@@ -437,16 +575,18 @@ func (d *Detector) effectiveThreshold(s catalog.Scenario, t Target) float64 {
 	if minSamples <= 0 {
 		minSamples = 20
 	}
-	if base, ready := d.Baseline.Baseline(baselineKey(s.ID, t.Params), minSamples); ready {
+	if base, ready := d.Baseline.Baseline(targetKey(s.ID, t.Params), minSamples); ready {
 		return base * s.Signal.BaselineMultiplier
 	}
 	return s.Signal.Threshold
 }
 
-// baselineKey is a stable per-target-per-scenario key: scenario id plus the
-// target params in sorted order, so a persisted baseline survives a restart
-// and a config reorder.
-func baselineKey(scenarioID string, params map[string]string) string {
+// targetKey is a stable per-target-per-scenario key: scenario id plus the
+// target params in sorted order. Stability is what lets both the learned
+// baseline and the incident lifecycle survive a restart and a reordering of
+// the config file; an index-based key silently reassigns every open incident
+// to a different target the moment someone edits the target list.
+func targetKey(scenarioID string, params map[string]string) string {
 	keys := make([]string, 0, len(params))
 	for k := range params {
 		keys = append(keys, k)
@@ -655,4 +795,19 @@ func renderQuery(name, promql string, params map[string]string) (string, error) 
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+// formatParams renders a target's params for a log line, sorted so the same
+// target always reads the same way.
+func formatParams(params map[string]string) string {
+	keys := make([]string, 0, len(params))
+	for k := range params {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, k+"="+params[k])
+	}
+	return strings.Join(parts, " ")
 }

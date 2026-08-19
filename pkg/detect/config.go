@@ -22,6 +22,15 @@ type Config struct {
 	// static thresholds only.
 	BaselineState string `yaml:"baselineState"`
 
+	// StateFile is where the incident lifecycle is persisted between ticks,
+	// so a restart does not re-open incidents that are still open. Empty
+	// disables persistence.
+	StateFile string `yaml:"stateFile"`
+
+	// CoverageProbe is the default control query proving a target is visible
+	// at all. Empty uses DefaultCoverageProbe; a target may override it.
+	CoverageProbe string `yaml:"coverageProbe"`
+
 	// AnomalyWatch and UnmatchedLog drive the unmatched-incident recorder:
 	// generic signals baselined per target, with a fingerprint appended to
 	// UnmatchedLog when one deviates while no catalog scenario is active.

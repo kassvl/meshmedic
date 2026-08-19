@@ -42,6 +42,16 @@ type Signal struct {
 	// BaselineMinSamples is how many healthy observations must accumulate
 	// before the relative threshold is trusted. Defaults to 20.
 	BaselineMinSamples int `yaml:"baselineMinSamples"`
+
+	// AbsenceIsSignal declares that an empty query result is a legitimate
+	// zero for this entry rather than an admission of blindness. It is how
+	// the failure class whose whole symptom is "the telemetry stopped"
+	// (traffic-vanished-triage and the client-deploy family behind it) keeps
+	// working under a detector that otherwise refuses to read silence as
+	// health. Only the target's coverage probe decides whether the tool can
+	// see the target at all; this flag decides what an empty scenario result
+	// means once it can.
+	AbsenceIsSignal bool `yaml:"absenceIsSignal"`
 }
 
 // Query is a named PromQL query whose result is attached to the pull request

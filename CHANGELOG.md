@@ -7,6 +7,24 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Four-state evaluation: `firing`, `clear`, `blind`, `unlocked`.** An empty
+  query result, a zero value, and a query error are three different facts and
+  now stay distinct all the way to the report. Previously all three read as
+  silence, so the tool could not tell you whether it was quiet because nothing
+  was wrong or quiet because it was blind.
+- **Coverage probe per target, every cycle.** A target whose control query
+  returns no series is *unobserved*, and every scenario against it reports
+  `blind` rather than `clear`. `watch` prints the coverage line each cycle.
+  Entries may declare `absenceIsSignal: true` so that a failure whose whole
+  symptom is stopped telemetry still works; the probe, not the scenario query,
+  is what separates "the traffic stopped" from "we cannot see this target".
+- **`meshmedic check`** evaluates every target once and exits non-zero if any
+  is unobserved, so a blind detector fails a readiness check instead of
+  looking healthy.
+- **Persisted incident state** (`stateFile`). A restart no longer re-opens
+  incidents that are still open. The state key is derived from the target's
+  parameters rather than its position in the config, so reordering the target
+  list does not reassign open incidents either.
 - **Config-free watch.** `meshmedic watch --prometheus URL --target k=v,k=v`
   runs against a Prometheus you already have, with no YAML file and no demo
   testbed. Opening pull requests still requires a config file, deliberately:

@@ -64,13 +64,22 @@ Prometheus signal --> catalog match --> rendered Istio patch --> pull request --
 
 ## Design rules
 
-1. **Deterministic by commitment.** Every fix comes from a reviewed catalog
+1. **Silence is only ever reported as an answer when the tool can prove it was
+   looking.** Every evaluation resolves to one of four states, never two:
+   `firing`, `clear`, `blind`, or `unlocked`. An empty query result, a zero
+   value, and a query error are three different facts about the world and stay
+   distinct all the way to the report. Each cycle runs a coverage probe per
+   target; a target that fails it is *unobserved*, and every scenario against
+   it reports `blind` rather than `clear`. `meshmedic check` exits non-zero
+   when any target is unobserved, so a blind detector fails your readiness
+   check instead of looking healthy.
+2. **Deterministic by commitment.** Every fix comes from a reviewed catalog
    entry with an explicit signal, guardrails, and a rollback story. There is
    no LLM in the detection or remediation path, and that is the identity, not
    a limitation to grow out of: the moment a model writes the applied patch,
    the guarantees below (zero cost, reproducibility, safety) are gone.
    Improvised YAML during an outage is how incidents get worse.
-2. **Pull requests, not kubectl.** MeshMedic needs no write access to the
+3. **Pull requests, not kubectl.** MeshMedic needs no write access to the
    cluster. The fix lands as a PR in your config repo with PromQL evidence
    attached, your existing policy checks (OPA, CI) run against it, and a human
    merges it. The audit trail is the git history you already have.

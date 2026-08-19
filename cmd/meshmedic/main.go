@@ -48,6 +48,8 @@ func main() {
 		runRender(os.Args[2:])
 	case "watch":
 		runWatch(os.Args[2:])
+	case "check":
+		runCheck(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("meshmedic", version)
 	default:
@@ -246,6 +248,22 @@ func runWatch(args []string) {
 
 	d := detect.New(scenarios, cfg.Targets, prom.NewClient(cfg.Prometheus), handler)
 	d.Log = logger.Printf
+	d.CoverageProbe = cfg.CoverageProbe
+	// Coverage every cycle, including the good ones. A number that only shows
+	// up when it is bad is a number nobody learns to read, and the invariant
+	// this enforces is that silence is only ever reported as an answer when
+	// the tool can prove it was looking.
+	d.OnCycle = func(c detect.Cycle) { logger.Print(c.Line()) }
+	if cfg.StateFile != "" {
+		d.StateFile = cfg.StateFile
+		if err := d.LoadState(cfg.StateFile); err != nil {
+			logger.Printf("state: load %s: %v (starting with no open incidents)", cfg.StateFile, err)
+		} else {
+			logger.Printf("incident state persisted at %s, so a restart does not re-open open incidents", cfg.StateFile)
+		}
+	} else {
+		logger.Print("no stateFile configured: a restart will re-open incidents that are still breaching")
+	}
 	// Close the loop: when a firing incident recovers, print the resolution so
 	// the operator watching the terminal sees the incident open and then clear
 	// with its own duration.
@@ -284,6 +302,77 @@ func runWatch(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	d.Run(ctx, cfg.IntervalDuration())
+}
+
+// runCheck evaluates every target once and reports coverage, then exits
+// non-zero if any target could not be observed. It is the CI and readiness
+// form of the same invariant `watch` enforces continuously: a detector that
+// cannot see its targets must not be mistaken for a quiet one.
+func runCheck(args []string) {
+	fs := flag.NewFlagSet("check", flag.ExitOnError)
+	dir := fs.String("catalog", defaultCatalogDir(), "catalog directory (or $MESHMEDIC_CATALOG)")
+	cfgPath := fs.String("config", "", "watch config file")
+	promURL := fs.String("prometheus", "", "Prometheus base URL; with --target this replaces the config file")
+	once := fs.Bool("once", true, "evaluate every target once and exit (the only mode today)")
+	var targets multiFlag
+	fs.Var(&targets, "target", "target params as key=value,key=value (repeatable)")
+	fs.Parse(args)
+	_ = *once
+
+	scenarios, err := catalog.LoadDir(*dir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "catalog invalid:", err)
+		os.Exit(1)
+	}
+	var cfg detect.Config
+	if *promURL != "" {
+		cfg, err = detect.ConfigFromFlags(*promURL, "", targets)
+	} else {
+		path := *cfgPath
+		if path == "" {
+			path = "watch.yaml"
+		}
+		cfg, err = detect.LoadConfig(path)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "config invalid:", err)
+		os.Exit(1)
+	}
+
+	logger := log.New(os.Stderr, "meshmedic: ", 0)
+	// A check must not act on what it finds: no incidents delivered, no
+	// resolutions, no pull requests. It only measures whether the tool can
+	// see, which is why the handler is a no-op.
+	d := detect.New(scenarios, cfg.Targets, prom.NewClient(cfg.Prometheus),
+		func(context.Context, detect.Incident) error { return nil })
+	d.Log = logger.Printf
+	d.CoverageProbe = cfg.CoverageProbe
+
+	cycle := d.Tick(context.Background(), time.Now())
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "TARGET\tCOVERAGE")
+	unobserved := map[string]bool{}
+	for _, params := range cycle.UnobservedTargets {
+		unobserved[describeTarget(params)] = true
+	}
+	for _, t := range cfg.Targets {
+		name := describeTarget(t.Params)
+		status := "observed"
+		if unobserved[name] {
+			status = "UNOBSERVED"
+		}
+		fmt.Fprintf(w, "%s\t%s\n", name, status)
+	}
+	w.Flush()
+	fmt.Println(cycle.Line())
+
+	if !cycle.Healthy() {
+		fmt.Fprintf(os.Stderr,
+			"\n%d of %d targets could not be observed. Silence from this detector is not an answer for them.\n",
+			cycle.Unobserved, len(cfg.Targets))
+		os.Exit(1)
+	}
 }
 
 // describeTarget names the incident's subject for the PR title, preferring

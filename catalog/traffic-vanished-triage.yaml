@@ -29,6 +29,12 @@ signal:
   comparison: ">"
   threshold: 0.5
   for: 60s
+  # This entry's whole symptom is that telemetry stopped, so an empty result
+  # is a legitimate zero here rather than an admission of blindness. It is
+  # the target's coverage probe, not this query, that decides whether the
+  # tool can see the target at all; if the probe fails, this entry goes
+  # blind with every other one instead of inventing an outage.
+  absenceIsSignal: true
 evidence:
   - name: former-callers-by-source
     promql: >
