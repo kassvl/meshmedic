@@ -87,7 +87,7 @@ func Markdown(inc detect.Incident, patch string) string {
 					continue
 				}
 				hit = true
-				fmt.Fprintf(&b, "**%s** — `%s`:\n\n```\n", le.Name, dep)
+				fmt.Fprintf(&b, "**%s**, `%s`:\n\n```\n", le.Name, dep)
 				for _, line := range le.Matches[dep] {
 					fmt.Fprintf(&b, "%s\n", line)
 				}
@@ -111,7 +111,7 @@ func Markdown(inc detect.Incident, patch string) string {
 				continue
 			}
 			for _, r := range re.Rollouts {
-				fmt.Fprintf(&b, "**%s** — `%s` rolled %ds ago, template diff (previous → current):\n\n```diff\n%s\n```\n",
+				fmt.Fprintf(&b, "**%s**: `%s` rolled %ds ago, template diff (previous to current):\n\n```diff\n%s\n```\n",
 					re.Name, r.Deployment, r.AgeSeconds, r.Diff)
 			}
 		}

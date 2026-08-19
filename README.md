@@ -263,6 +263,19 @@ Novel failure modes with no signature, cross-service causal chains, and
 problems that never emit a signal are out of reach by design. Stating what
 the tool cannot see is part of trusting what it can.
 
+## Contributing
+
+The most useful contribution is a catalog entry, and the process for one is
+unusual enough to be worth reading first: no entry merges on the strength of
+its PromQL looking right, it merges when the fault has been injected on a real
+mesh and the signal watched to appear. [CONTRIBUTING.md](CONTRIBUTING.md) walks
+through it, and [catalog/RETIRED.md](catalog/RETIRED.md) is the fastest way to
+see what the bar is, because it records an entry that was removed after
+measurement showed the telemetry it read does not exist.
+
+What this tool can and cannot reach, and why `meshmedic-prove` is a separate
+download, are in [SECURITY.md](SECURITY.md).
+
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md). The 60 second video of a mesh healing itself

@@ -75,6 +75,11 @@ Every catalog entry now has either a proof or a declared reason it cannot have
 one. `meshmedic-prove --list` prints the inventory: 16 proven, 3 declared
 unprovable with a measurement behind each, 0 silently missing.
 
+These files are verbatim captures, not edited for consistency. One of them
+still carries the report formatting used before 2026-08-19, which is why its
+section headers differ slightly from the rest. Rewriting a captured run to
+match a later style would make it a nicer document and a worse record.
+
 ## Running these yourself
 
 Run the prover in the background, not in a foreground shell with a timeout.

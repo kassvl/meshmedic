@@ -192,7 +192,7 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 		for _, c := range s.Reset {
 			if err := r.Exec(resetCtx, c.Run); err != nil {
 				res.Failures = append(res.Failures,
-					fmt.Sprintf("RESET FAILED (%s): %v — the testbed may be dirty for the next proof", c, err))
+					fmt.Sprintf("RESET FAILED (%s): %v. The testbed may be dirty for the next proof", c, err))
 				res.Passed = false
 			}
 		}
@@ -213,9 +213,9 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 			res.Blind = true
 			res.BlindReason = fmt.Sprintf("the process was suspended for about %s during the run", gap.Round(time.Second))
 			res.Passed = false
-			note := "BLIND: " + res.BlindReason + " — the measurement is void and says nothing about the entry"
+			note := "BLIND: " + res.BlindReason + ". The measurement is void and says nothing about the entry"
 			if res.Fired {
-				note = "BLIND: " + res.BlindReason + " — the entry fired correctly in " +
+				note = "BLIND: " + res.BlindReason + ". The entry fired correctly in " +
 					res.FiredAfter.Round(time.Second).String() + "; the rest of the measurement is void"
 			}
 			res.Failures = append([]string{note}, res.Failures...)
@@ -229,7 +229,7 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 	if reason, ok := r.preflight(ctx, s); !ok {
 		res.Blind, res.BlindReason = true, reason
 		res.Failures = append(res.Failures,
-			"BLIND: "+reason+" — this run says nothing about the entry, and no fault was injected")
+			"BLIND: "+reason+". This run says nothing about the entry, and no fault was injected")
 		return res
 	}
 
@@ -315,7 +315,7 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 		res.Blind = true
 		res.BlindReason = fmt.Sprintf("the process was suspended for %s mid-run", r.suspended.Round(time.Second))
 		res.Failures = append(res.Failures,
-			"BLIND: "+res.BlindReason+" — the measurement is void and says nothing about the entry")
+			"BLIND: "+res.BlindReason+". The measurement is void and says nothing about the entry")
 		return res
 	}
 	if !fired {
@@ -331,7 +331,7 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 			res.Blind = true
 			res.BlindReason = fmt.Sprintf("the observer went blind %d time(s) during the window", r.flickers)
 			res.Failures = append(res.Failures,
-				"BLIND: "+res.BlindReason+" — each blink clears any pending breach by design, so a non-firing result here is evidence about the network, not the entry")
+				"BLIND: "+res.BlindReason+". Each blink clears any pending breach by design, so a non-firing result here is evidence about the network, not the entry")
 			return res
 		}
 		// Distinguish "the entry did not fire" from "we could not see". If
@@ -340,7 +340,7 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 		if reason, ok := r.preflight(ctx, s); !ok {
 			res.Blind, res.BlindReason = true, reason
 			res.Failures = append(res.Failures,
-				"BLIND: "+reason+" — the fault was injected but the harness stopped being able to observe, so this says nothing about the entry")
+				"BLIND: "+reason+". The fault was injected but the harness stopped being able to observe, so this says nothing about the entry")
 			return res
 		}
 		res.Failures = append(res.Failures, fmt.Sprintf(
@@ -406,7 +406,7 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 			res.Blind = true
 			res.BlindReason = fmt.Sprintf("the process was suspended for %s during the resolution window", r.suspended.Round(time.Second))
 			res.Failures = append(res.Failures,
-				"BLIND: "+res.BlindReason+" — the entry fired correctly; only the resolution half is void")
+				"BLIND: "+res.BlindReason+". The entry fired correctly; only the resolution half is void")
 			return res
 		}
 		if !resolved {
