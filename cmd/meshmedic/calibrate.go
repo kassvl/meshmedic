@@ -38,7 +38,7 @@ func runCalibrate(args []string) {
 	fs.Var(&targets, "target", "target params as key=value,key=value (repeatable)")
 	fs.Parse(args)
 
-	scenarios, err := catalog.LoadDir(*dir)
+	scenarios, _, _, err := loadCatalog(*dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "catalog invalid:", err)
 		os.Exit(1)

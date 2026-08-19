@@ -21,6 +21,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	meshmedic "github.com/kassvl/meshmedic"
 	"github.com/kassvl/meshmedic/pkg/baseline"
 	"github.com/kassvl/meshmedic/pkg/catalog"
 	"github.com/kassvl/meshmedic/pkg/detect"
@@ -85,25 +86,56 @@ The catalog directory defaults to ./catalog, or $MESHMEDIC_CATALOG when set.`)
 }
 
 // defaultCatalogDir resolves where the catalog lives when --catalog is not
-// given. The environment variable is what lets a container image bake the
-// catalog in at a fixed path and stay correct regardless of the working
-// directory the user runs it from.
+// given. Empty means the catalog embedded in the binary, which is what makes
+// `go install` produce something that runs: go install delivers an executable
+// and nothing else, and an engine that reads a directory of YAML at startup
+// would die on the first command a new user types.
+//
+// The environment variable still lets a container image bake the catalog in at
+// a fixed path and stay correct regardless of the working directory.
 func defaultCatalogDir() string {
-	if dir := os.Getenv("MESHMEDIC_CATALOG"); dir != "" {
-		return dir
+	return os.Getenv("MESHMEDIC_CATALOG")
+}
+
+// loadCatalog reads the catalog from dir, or from the binary when dir is
+// empty. It returns the lock alongside, from the same place, so the entries
+// and the hashes that gate them can never come from different sources.
+func loadCatalog(dir string) ([]catalog.Scenario, catalog.Lock, string, error) {
+	if dir == "" {
+		scenarios, err := catalog.LoadFS(meshmedic.CatalogFS(), ".")
+		if err != nil {
+			return nil, catalog.Lock{}, "", err
+		}
+		lock, err := catalog.ParseLock(meshmedic.Lock(), "embedded catalog.lock")
+		return scenarios, lock, "embedded catalog.lock", err
 	}
-	return "catalog"
+	scenarios, err := catalog.LoadDir(dir)
+	if err != nil {
+		return nil, catalog.Lock{}, "", err
+	}
+	lockPath := defaultLockPath(dir)
+	lock, err := catalog.LoadLock(lockPath)
+	return scenarios, lock, lockPath, err
+}
+
+// catalogSource names where the catalog came from, for log lines that would
+// otherwise leave an operator guessing which entries are running.
+func catalogSource(dir string) string {
+	if dir == "" {
+		return "catalog embedded in this binary"
+	}
+	return dir
 }
 
 func runValidate(args []string) {
 	fs := flag.NewFlagSet("validate", flag.ExitOnError)
-	dir := fs.String("catalog", defaultCatalogDir(), "catalog directory (or $MESHMEDIC_CATALOG)")
+	dir := fs.String("catalog", defaultCatalogDir(), "catalog directory; empty uses the catalog embedded in this binary (or $MESHMEDIC_CATALOG)")
 	strict := fs.Bool("strict", false, "exit non-zero if any entry is unlocked (missing or edited)")
 	noDrift := fs.Bool("no-drift", false, "exit non-zero only if an approved entry was edited without re-approval")
 	against := fs.String("against-prometheus", "", "check every entry's metric and label references against a live Prometheus")
 	fs.Parse(args)
 
-	scenarios, err := catalog.LoadDir(*dir)
+	scenarios, lock, lockPath, err := loadCatalog(*dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "catalog invalid:", err)
 		os.Exit(1)
@@ -123,11 +155,8 @@ func runValidate(args []string) {
 
 	// The lock standing is part of validation, not a separate concern: a
 	// catalog that loads but is half unapproved covers less than it looks.
-	unlocked, lock, err := lockStatuses(scenarios, defaultLockPath(*dir))
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "lock invalid:", err)
-		os.Exit(1)
-	}
+	unlocked := unlockedFrom(lock, scenarios, lockPath)
+	fmt.Printf("source: %s\n", catalogSource(*dir))
 	fmt.Println()
 	printLockReport(scenarios, lock, unlocked)
 	fmt.Printf("\n%d of %d entries are locked and will run\n", len(scenarios)-len(unlocked), len(scenarios))
@@ -158,7 +187,7 @@ func runValidate(args []string) {
 
 func runRender(args []string) {
 	fs := flag.NewFlagSet("render", flag.ExitOnError)
-	dir := fs.String("catalog", defaultCatalogDir(), "catalog directory (or $MESHMEDIC_CATALOG)")
+	dir := fs.String("catalog", defaultCatalogDir(), "catalog directory; empty uses the catalog embedded in this binary (or $MESHMEDIC_CATALOG)")
 	id := fs.String("scenario", "", "scenario id")
 	var sets multiFlag
 	fs.Var(&sets, "set", "template parameter, key=value (repeatable)")
@@ -178,7 +207,7 @@ func runRender(args []string) {
 		params[k] = v
 	}
 
-	scenarios, err := catalog.LoadDir(*dir)
+	scenarios, _, _, err := loadCatalog(*dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "catalog invalid:", err)
 		os.Exit(1)
@@ -201,7 +230,7 @@ func runRender(args []string) {
 
 func runWatch(args []string) {
 	fs := flag.NewFlagSet("watch", flag.ExitOnError)
-	dir := fs.String("catalog", defaultCatalogDir(), "catalog directory (or $MESHMEDIC_CATALOG)")
+	dir := fs.String("catalog", defaultCatalogDir(), "catalog directory; empty uses the catalog embedded in this binary (or $MESHMEDIC_CATALOG)")
 	cfgPath := fs.String("config", "", "watch config file (default watch.yaml when --prometheus is not given)")
 	promURL := fs.String("prometheus", "", "Prometheus base URL; with --target this replaces the config file")
 	interval := fs.String("interval", "", "evaluation interval, e.g. 30s (flag form only)")
@@ -210,7 +239,7 @@ func runWatch(args []string) {
 	fs.Var(&targets, "target", "target params as key=value,key=value (repeatable, flag form only)")
 	fs.Parse(args)
 
-	scenarios, err := catalog.LoadDir(*dir)
+	scenarios, lock, lockPath, err := loadCatalog(*dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "catalog invalid:", err)
 		os.Exit(1)
@@ -303,11 +332,7 @@ func runWatch(args []string) {
 	// reviewed and testbed-validated, so it does not run. Reported loudly
 	// rather than dropped: an operator has to learn which part of the catalog
 	// is not covering them.
-	unlocked, _, err := lockStatuses(scenarios, defaultLockPath(*dir))
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "lock invalid:", err)
-		os.Exit(1)
-	}
+	unlocked := unlockedFrom(lock, scenarios, lockPath)
 	if len(unlocked) > 0 {
 		ids := make([]string, 0, len(unlocked))
 		for id := range unlocked {
@@ -394,7 +419,7 @@ func runWatch(args []string) {
 // cannot see its targets must not be mistaken for a quiet one.
 func runCheck(args []string) {
 	fs := flag.NewFlagSet("check", flag.ExitOnError)
-	dir := fs.String("catalog", defaultCatalogDir(), "catalog directory (or $MESHMEDIC_CATALOG)")
+	dir := fs.String("catalog", defaultCatalogDir(), "catalog directory; empty uses the catalog embedded in this binary (or $MESHMEDIC_CATALOG)")
 	cfgPath := fs.String("config", "", "watch config file")
 	promURL := fs.String("prometheus", "", "Prometheus base URL; with --target this replaces the config file")
 	once := fs.Bool("once", true, "evaluate every target once and exit (the only mode today)")
@@ -403,7 +428,7 @@ func runCheck(args []string) {
 	fs.Parse(args)
 	_ = *once
 
-	scenarios, err := catalog.LoadDir(*dir)
+	scenarios, _, _, err := loadCatalog(*dir)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "catalog invalid:", err)
 		os.Exit(1)

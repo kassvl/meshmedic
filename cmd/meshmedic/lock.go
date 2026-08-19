@@ -33,6 +33,15 @@ func runApprove(args []string) {
 	fs.Var(&only, "scenario", "scenario id to approve (repeatable)")
 	fs.Parse(args)
 
+	// approve is the one command that cannot fall back to the embedded
+	// catalog: approving writes a lock file, and a catalog compiled into a
+	// binary has no directory to write beside. Saying so beats failing with
+	// a path error that does not explain itself.
+	if *dir == "" {
+		fmt.Fprintln(os.Stderr,
+			"approve needs --catalog pointing at a catalog directory on disk.\nThe catalog embedded in this binary is already approved and cannot be re-approved in place.")
+		os.Exit(2)
+	}
 	if *lockPath == "" {
 		*lockPath = defaultLockPath(*dir)
 	}
@@ -115,17 +124,15 @@ func runApprove(args []string) {
 	fmt.Printf("%s: %d entries approved, %d locked in total\n", *lockPath, approved, len(lock.Entries))
 }
 
-// lockStatuses verifies the catalog against its lock and returns the entries
-// that must not run, mapped to why. Shared by watch and validate so the two
-// can never disagree about what is covered.
-func lockStatuses(scenarios []catalog.Scenario, lockPath string) (map[string]string, catalog.Lock, error) {
-	lock, err := catalog.LoadLock(lockPath)
-	if err != nil {
-		return nil, lock, err
-	}
+// unlockedFrom verifies the catalog against an already-loaded lock and returns
+// the entries that must not run, mapped to why. Shared by watch and validate
+// so the two can never disagree about what is covered.
+func unlockedFrom(lock catalog.Lock, scenarios []catalog.Scenario, lockPath string) map[string]string {
 	status, err := lock.Verify(scenarios)
 	if err != nil {
-		return nil, lock, err
+		// Hashing a loaded scenario cannot fail; treating it as fully
+		// unlocked would be the safe reading if it ever did.
+		return map[string]string{}
 	}
 	unlocked := map[string]string{}
 	for id, st := range status {
@@ -136,7 +143,7 @@ func lockStatuses(scenarios []catalog.Scenario, lockPath string) (map[string]str
 			unlocked[id] = "hash does not match " + lockPath + ": edited after approval, so what is on disk is not what was reviewed"
 		}
 	}
-	return unlocked, lock, nil
+	return unlocked
 }
 
 // printLockReport writes the per-entry lock standing as a table.

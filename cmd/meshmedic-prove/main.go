@@ -49,6 +49,7 @@ func main() {
 	outDir := fs.String("out", "", "write each incident report under this directory")
 	yes := fs.Bool("yes-inject-faults", false, "acknowledge that this mutates the cluster it is pointed at")
 	kubeContext := fs.String("kube-context", os.Getenv("MESHMEDIC_KUBE_CONTEXT"), "kubeconfig context to read through; must be the cluster the inject commands target")
+	quiesce := fs.Duration("quiesce", 150*time.Second, "settle time between proofs, so one proof's fault does not leak into the next")
 	fs.Parse(os.Args[1:])
 
 	scenarios, err := catalog.LoadDir(*catalogDir)
@@ -125,6 +126,21 @@ func main() {
 
 	results := make([]proof.Result, 0, len(specs))
 	for i, sp := range specs {
+		// Quiesce between proofs. A reset takes time to propagate and the
+		// rate windows in these signals are two minutes wide, so a proof that
+		// starts the instant the previous one finished is measuring the tail
+		// of someone else's fault. Skipping this is not theoretical:
+		// authz-deny-flood passes in 1m2s on its own and did not fire at all
+		// within six minutes when it followed traffic-vanished-triage by
+		// sixteen seconds, because loadgen was still coming back and there
+		// were no requests left to deny.
+		if i > 0 && *quiesce > 0 {
+			logger.Printf("quiescing %s so the previous fault decays out of the rate windows", *quiesce)
+			select {
+			case <-ctx.Done():
+			case <-time.After(*quiesce):
+			}
+		}
 		logger.Printf("[%d/%d] %s: %s", i+1, len(specs), sp.Entry, sp.Summary)
 		runner.Log = func(format string, args ...any) {
 			logger.Printf("  "+sp.Entry+": "+format, args...)

@@ -80,8 +80,8 @@ func TestLoadRejectsMutualSuppression(t *testing.T) {
 
 func TestValidateRejectsBadComparison(t *testing.T) {
 	s := Scenario{
-		ID:    "x",
-		Title: "x",
+		ID:     "x",
+		Title:  "x",
 		Signal: Signal{PromQL: "up", Comparison: "~", Threshold: 1},
 		Remediation: Remediation{
 			Target:        Target{Kind: "VirtualService"},
@@ -95,8 +95,8 @@ func TestValidateRejectsBadComparison(t *testing.T) {
 
 func TestValidateRejectsBrokenTemplate(t *testing.T) {
 	s := Scenario{
-		ID:    "x",
-		Title: "x",
+		ID:     "x",
+		Title:  "x",
 		Signal: Signal{PromQL: "up", Comparison: ">", Threshold: 1},
 		Remediation: Remediation{
 			Target:        Target{Kind: "VirtualService"},

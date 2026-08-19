@@ -23,7 +23,10 @@ write credentials at all.
 
 Prefer a binary? `go install github.com/kassvl/meshmedic/cmd/meshmedic@latest`,
 or take a [release archive](https://github.com/kassvl/meshmedic/releases)
-(linux and macOS, amd64 and arm64). Both carry the catalog the engine reads.
+(linux and macOS, amd64 and arm64). The reviewed catalog and its lock are
+compiled into the binary, so a single file is the whole tool: no directory to
+place, nothing to point at. `--catalog` still overrides both when you want to
+run your own entries.
 
 ![MeshMedic demo: chaos to merged PR to healed mesh](demo/video/meshmedic-demo.gif)
 
@@ -169,8 +172,9 @@ Some entries exist because the usual signals are silent:
 
 ## Configuring more than one target
 
-MeshMedic is a single Go binary plus the reviewable `catalog/` directory it
-reads at startup (`--catalog`, or `MESHMEDIC_CATALOG`, points it elsewhere).
+MeshMedic is a single Go binary carrying the reviewed `catalog/` and its lock
+(`--catalog`, or `MESHMEDIC_CATALOG`, points it at a directory instead, which
+is what you want while editing entries).
 The flag form above is the fast path for one target; a config file is how you
 watch several, tune the interval, and turn on the features below.
 

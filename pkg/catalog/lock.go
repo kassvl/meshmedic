@@ -95,14 +95,20 @@ func Digest(entries map[string]LockEntry) string {
 // an error: a catalog with no lock is a legitimate starting state, and the
 // caller decides how loudly to say so.
 func LoadLock(path string) (Lock, error) {
-	l := Lock{Version: LockVersion, Entries: map[string]LockEntry{}}
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return l, nil
+		return Lock{Version: LockVersion, Entries: map[string]LockEntry{}}, nil
 	}
 	if err != nil {
-		return l, err
+		return Lock{Version: LockVersion, Entries: map[string]LockEntry{}}, err
 	}
+	return ParseLock(data, path)
+}
+
+// ParseLock decodes lock bytes from anywhere, so a binary carrying its own
+// embedded lock validates it exactly as it would one read from disk.
+func ParseLock(data []byte, path string) (Lock, error) {
+	l := Lock{Version: LockVersion, Entries: map[string]LockEntry{}}
 	if err := json.Unmarshal(data, &l); err != nil {
 		return l, fmt.Errorf("%s: %w", path, err)
 	}
