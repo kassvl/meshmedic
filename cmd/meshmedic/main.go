@@ -68,6 +68,7 @@ func usage() {
   meshmedic watch --config watch.yaml [--catalog dir]
   meshmedic watch --prometheus URL --target k=v,k=v [--target ...] [--interval 30s]
   meshmedic check --config watch.yaml            (exit 1 if any target is unobserved)
+  meshmedic validate --against-prometheus URL    (do the catalog's metrics exist?)
   meshmedic approve --scenario id --istio 1.24.1 --testbed <commit> [--all]
 
 The second watch form needs no config file, which is the quickest way to point
@@ -95,6 +96,7 @@ func runValidate(args []string) {
 	dir := fs.String("catalog", defaultCatalogDir(), "catalog directory (or $MESHMEDIC_CATALOG)")
 	strict := fs.Bool("strict", false, "exit non-zero if any entry is unlocked (missing or edited)")
 	noDrift := fs.Bool("no-drift", false, "exit non-zero only if an approved entry was edited without re-approval")
+	against := fs.String("against-prometheus", "", "check every entry's metric and label references against a live Prometheus")
 	fs.Parse(args)
 
 	scenarios, err := catalog.LoadDir(*dir)
@@ -109,6 +111,11 @@ func runValidate(args []string) {
 	}
 	w.Flush()
 	fmt.Printf("catalog OK: %d scenarios\n", len(scenarios))
+
+	if *against != "" {
+		fmt.Println()
+		runAgainstPrometheus(scenarios, *against, nil, *strict)
+	}
 
 	// The lock standing is part of validation, not a separate concern: a
 	// catalog that loads but is half unapproved covers less than it looks.

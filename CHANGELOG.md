@@ -25,6 +25,21 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   incidents that are still open. The state key is derived from the target's
   parameters rather than its position in the config, so reordering the target
   list does not reassign open incidents either.
+- **`validate --against-prometheus URL`.** Label sets were verified live on
+  one Istio version; when Istio renames a label the affected PromQL silently
+  never fires again, because a matcher on a missing label matches nothing
+  rather than erroring. Coverage is lost with no signal at all, and is
+  discovered during an incident. This extracts the metric names and label keys
+  every entry references and confirms each exists on a live server, reporting
+  `ok` / `metric missing` / `label missing` per scenario, with `--strict` for
+  CI. Extraction tokenizes PromQL rather than pattern-matching it, so a brace
+  inside a string literal is never mistaken for a selector, and does so without
+  taking a dependency on `github.com/prometheus/prometheus`, which would bring
+  253 modules into a build that has one.
+  First result on the stock Istio addon's telemetry: seventeen of nineteen
+  entries resolve. `retry-storm-damping` needs `envoy_cluster_upstream_rq_retry`
+  and `waypoint-overload-scale` needs `kube_pod_status_ready`, neither of which
+  the addon scrapes.
 - **`catalog.lock` and `meshmedic approve`.** The catalog directory was both
   the editable surface and the enforced artifact, so nothing established that
   the entry running was the entry that was reviewed and testbed-validated. The
