@@ -1031,7 +1031,7 @@ func (f valueByQueryFunc) QuerySeries(_ context.Context, promql string) ([]prom.
 	return []prom.Sample{{Value: v}}, nil
 }
 
-// The audit's B-2: every one of the 19 catalog entries declares a
+// The audit's B-2: every catalog entry declares a
 // maxAppliesPerHour, and until now nothing in the codebase read it. The
 // safety story promised a rate limit the code did not implement.
 func TestGuardrailLimitsAppliesPerHour(t *testing.T) {

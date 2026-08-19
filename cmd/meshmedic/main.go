@@ -171,6 +171,18 @@ func runValidate(args []string) {
 	// silent failure the lock exists to catch.
 	if *noDrift {
 		drifted := 0
+		// A removed entry is drift too, and the quieter kind: deleting a
+		// detection reduces coverage and used to pass in silence because the
+		// lock knew but nothing failed on it. Retiring an entry should be a
+		// deliberate act with a record, not a diff nobody had to acknowledge.
+		if stale := lock.Stale(scenarios); len(stale) > 0 {
+			for _, id := range stale {
+				fmt.Fprintf(os.Stderr, "REMOVED %s: approved in %s but no longer in the catalog\n", id, lockPath)
+			}
+			fmt.Fprintf(os.Stderr,
+				"\n--no-drift: %d entries were removed without their approvals being retired.\nRun `meshmedic approve --prune` and record why in catalog/RETIRED.md.\n", len(stale))
+			os.Exit(1)
+		}
 		for id, reason := range unlocked {
 			if _, everApproved := lock.Entries[id]; everApproved {
 				fmt.Fprintf(os.Stderr, "DRIFT %s: %s\n", id, reason)

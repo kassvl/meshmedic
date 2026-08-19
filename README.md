@@ -13,7 +13,7 @@ to install but a container runtime:
 $ docker run --rm --network host ghcr.io/kassvl/meshmedic:latest \
     watch --prometheus http://localhost:9090 \
           --target service=payments,namespace=demo
-meshmedic: watching 19 scenarios for 1 targets against http://localhost:9090 every 30s
+meshmedic: watching 18 scenarios for 1 targets against http://localhost:9090 every 30s
 ```
 
 It evaluates every catalog signal against that target and prints the incident
@@ -89,10 +89,20 @@ Prometheus signal --> catalog match --> rendered Istio patch --> pull request --
 
 ## Catalog
 
-Nineteen entries today, each with the PromQL that detects it, evidence
-queries for the report, guardrails, and a rollback note. Entries that carry a
+Eighteen entries today, each with the PromQL that detects it, evidence queries
+for the report, guardrails, and a rollback note. Entries that carry a
 mesh-native patch propose it; entries where the right fix depends on intent
 are `report-only` and deliver an evidence dossier instead of a guess.
+
+Sixteen of them have been demonstrated end to end on a live cluster: the fault
+injected, a real detector watching, and the entry asserted to fire within its
+own hold duration, name the actual culprit, keep its declared neighbours quiet,
+and clear when the fault is removed. The runs are kept in
+[`demo/proof-reports/`](demo/proof-reports/). The remaining two are declared
+unprovable on this testbed in [`proof/UNPROVABLE.yaml`](proof/UNPROVABLE.yaml),
+each with the measurement behind the claim, so nothing is silently unverified.
+Entries that were retired, and what was measured to justify retiring them, are
+in [`catalog/RETIRED.md`](catalog/RETIRED.md).
 
 | Scenario | Failure | Response |
 | --- | --- | --- |
@@ -107,7 +117,6 @@ are `report-only` and deliver an evidence dossier instead of a guess.
 | `no-route-blackhole` | 404/NR, requests match no route | report-only, source-keyed |
 | `ingress-edge-outage` | users getting 5xx at the ingress gateway (front-door outage) | report-only, lists the HTTPRoutes |
 | `upstream-host-ejection-flood` | UH flags, mesh refuses ready endpoints | cap ejection, set minHealthPercent |
-| `mtls-policy-conflict` | plaintext clients hit strict mTLS (L7) | scoped PERMISSIVE fallback, flagged temporary |
 | `mtls-policy-conflict-ambient` | plaintext client denied at L4 by ztunnel | scoped PERMISSIVE fallback, from TCP telemetry |
 | `authz-deny-flood` | AuthorizationPolicy denying live traffic (403) | report-only |
 | `rate-limit-throttling` | traffic rejected with 429/RL by a rate limit | report-only, lists the EnvoyFilters |
@@ -180,7 +189,7 @@ watch several, tune the interval, and turn on the features below.
 
 ```console
 $ meshmedic validate                       # what the engine knows how to fix
-catalog OK: 19 scenarios
+catalog OK: 18 scenarios
 $ meshmedic watch --config examples/watch.yaml
 ```
 

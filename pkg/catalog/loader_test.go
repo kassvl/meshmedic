@@ -13,8 +13,13 @@ func TestLoadRealCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(scenarios) != 19 {
-		t.Fatalf("got %d scenarios, want 19", len(scenarios))
+	// Deliberately no count assertion. A magic number here has to be edited
+	// on every legitimate catalog change, which trains people to bump it
+	// without reading the diff, and an accidental deletion is caught properly
+	// by the lock instead: an approval left behind by a removed entry fails
+	// TestLockHasNoStaleApprovals and the CI drift gate.
+	if len(scenarios) == 0 {
+		t.Fatal("catalog is empty")
 	}
 	for i := 1; i < len(scenarios); i++ {
 		if scenarios[i-1].ID >= scenarios[i].ID {
@@ -105,5 +110,26 @@ func TestValidateRejectsBrokenTemplate(t *testing.T) {
 	}
 	if err := s.Validate(); err == nil {
 		t.Fatal("want error for unparseable template, got nil")
+	}
+}
+
+// Deleting a catalog entry used to pass CI in silence. The lock knew, because
+// the approval it left behind no longer had an entry, but nothing failed on
+// it, so a detection could disappear and only the count in a test would
+// notice. Retirement should be a deliberate act with a record, not a diff
+// nobody had to acknowledge.
+func TestLockHasNoStaleApprovals(t *testing.T) {
+	scenarios, err := LoadDir("../../catalog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lock, err := LoadLock("../../catalog.lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale := lock.Stale(scenarios); len(stale) > 0 {
+		t.Errorf("catalog.lock approves %v, which no longer exist in the catalog.\n"+
+			"An entry was removed without the approval being retired. Run `meshmedic approve --prune`\n"+
+			"and record why it went in catalog/RETIRED.md.", stale)
 	}
 }

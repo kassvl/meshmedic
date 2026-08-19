@@ -56,7 +56,8 @@ Engine v0.3 - all verified by unit tests (7/7 packages) and live bench runs:
 - Deterministic triage layer: absence signal (`or vector(0)` + `offset`),
   namespace log-signature sweep, ReplicaSet rollout diff; `report-only`
   scenarios produce a dossier instead of a patch.
-- Catalog: 19 entries, every signal validated by injecting the fault on the
+- Catalog: 18 entries (mtls-policy-conflict retired 2026-08-19, see
+  catalog/RETIRED.md), every signal validated by injecting the fault on the
   testbed and observing real telemetry before merge. `no-route-blackhole` (NR,
   404 no-route) is the first source-keyed entry: live validation found that a
   no-route request carries `destination_service_name=unknown`, so it keys on

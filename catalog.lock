@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "sha256:b07f1eac90b73d3edb83e846e96e0f696f33e749b7650bdbfdde948be39d4b53",
+  "digest": "sha256:6b688073ccc5bcd28f9a27ff964abf2bc604fc851ea24e40654781dbc55191e1",
   "entries": {
     "authz-deny-flood": {
       "sha256": "sha256:ad72c9e7cb7d96883fb8a3ea3daba45b3b5a9c112d722c925a433437911683e0",
@@ -66,20 +66,12 @@
         "testbed": "0b41872"
       }
     },
-    "mtls-policy-conflict": {
-      "sha256": "sha256:b08d0250038bcaebbc056ec9dcd43b08478f8e0aec43b94cc21b4cf838b4d92b",
-      "validated_at": "2026-08-19T02:44:03.908701Z",
-      "validated_against": {
-        "istio": "1.24.1",
-        "testbed": "0b41872"
-      }
-    },
     "mtls-policy-conflict-ambient": {
-      "sha256": "sha256:0718650bc5d85b6e3540a7b0a069fd42a4c93e9762eccf921c7020a8fb65b995",
-      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "sha256": "sha256:2fa797fa06d5bd6c835c272e737629d44ead96a374635ef2a65d60e06349d589",
+      "validated_at": "2026-08-19T18:45:48.214771Z",
       "validated_against": {
         "istio": "1.24.1",
-        "testbed": "0b41872"
+        "testbed": "3bb4c3b"
       }
     },
     "no-route-blackhole": {

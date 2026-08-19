@@ -44,10 +44,6 @@ objectEvidence:
     fields:
       - items[*].metadata.name
       - items[*].spec.mtls.mode
-suppresses:
-  # In a mixed sidecar/ambient mesh both views of this incident can fire;
-  # the L4 view is closer to the root cause, one PR is enough.
-  - mtls-policy-conflict
 remediation:
   target:
     apiVersion: security.istio.io/v1
