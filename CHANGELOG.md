@@ -3,7 +3,7 @@
 All notable changes to MeshMedic. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.0.0] - 2026-08-19
 
 ### Added
 
@@ -125,6 +125,7 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The traffic-vanished baseline uses `max_over_time` rather than a fixed
   offset, which went blind inside back-to-back outages.
 
-[Unreleased]: https://github.com/kassvl/meshmedic/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/kassvl/meshmedic/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/kassvl/meshmedic/compare/v0.3.1...v1.0.0
 [0.3.1]: https://github.com/kassvl/meshmedic/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/kassvl/meshmedic/releases/tag/v0.3.0
