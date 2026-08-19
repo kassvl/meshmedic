@@ -718,3 +718,68 @@ func TestNoFlickerStillFailsANonFiringEntry(t *testing.T) {
 		t.Errorf("failures = %v, want the entry blamed when the observer was fine", res.Failures)
 	}
 }
+
+// A warm-up that starts while a previous fault is still decaying learns a
+// normal several times too high, and an entry whose normal is wrong sleeps
+// through the regression it was written for. Measured live: a run warmed on a
+// cluster decaying from 488ms failed to fire at 486ms.
+func TestWarmupLearnsFromTheFloorNotTheDecayingTail(t *testing.T) {
+	inner := &countingStore{vals: map[string][]float64{}}
+	g := &floorCollector{inner: inner, tolerance: 1.5}
+
+	// A cluster decaying out of a previous fault, then settling at 50. The
+	// sequence falls monotonically, which is exactly what defeats a
+	// running-minimum filter: every reading is the lowest seen so far.
+	for _, v := range []float64{488, 480, 242, 120, 55, 50, 48, 52, 49, 51} {
+		g.Observe("k", v)
+	}
+	g.commit()
+
+	got := inner.vals["k"]
+	if len(got) == 0 {
+		t.Fatal("nothing was learned at all")
+	}
+	for _, v := range got {
+		if v > 100 {
+			t.Errorf("learned %v from the decaying tail; the floor is around 50", v)
+		}
+	}
+	if g.rejected == 0 {
+		t.Error("nothing was rejected, so the gate did nothing")
+	}
+	t.Logf("accepted %d, rejected %d, learned %v", g.accepted, g.rejected, got)
+}
+
+// A cluster that is quiet from the start must not have its readings thrown
+// away: the gate is a guard against a decaying start, not a filter that only
+// likes the very first number.
+func TestWarmupAcceptsAQuietClusterThroughout(t *testing.T) {
+	inner := &countingStore{vals: map[string][]float64{}}
+	g := &floorCollector{inner: inner, tolerance: 1.5}
+
+	for _, v := range []float64{50, 52, 48, 55, 47, 51, 53, 49} {
+		g.Observe("k", v)
+	}
+	g.commit()
+	if g.rejected != 0 {
+		t.Errorf("rejected %d readings from an already-quiet cluster", g.rejected)
+	}
+	if len(inner.vals["k"]) != 8 {
+		t.Errorf("learned %d readings, want all 8", len(inner.vals["k"]))
+	}
+}
+
+type countingStore struct{ vals map[string][]float64 }
+
+func (c *countingStore) Observe(key string, v float64) { c.vals[key] = append(c.vals[key], v) }
+func (c *countingStore) Baseline(key string, min int) (float64, bool) {
+	vs := c.vals[key]
+	if len(vs) < min {
+		return 0, false
+	}
+	var sum float64
+	for _, v := range vs {
+		sum += v
+	}
+	return sum / float64(len(vs)), true
+}

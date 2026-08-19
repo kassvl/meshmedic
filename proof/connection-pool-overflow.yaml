@@ -21,7 +21,12 @@ inject:
 reset:
   - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, scale, deploy/loadgen, --replicas=1]
   - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/payments-v1, deploy/payments-v2, TIMING_50_PERCENTILE=20ms]
-  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, patch, destinationrule, payments, --type=json, -p, '[{"op":"remove","path":"/spec/trafficPolicy"}]']
+  # Merge with null rather than a JSON remove: reset runs twice by design,
+  # once to prove the incident closes and once in the deferred cleanup, and a
+  # remove op on an already-removed path is an error. A reset that is not
+  # idempotent fails a proof whose entry did everything right, which is what
+  # happened here.
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, patch, destinationrule, payments, --type=merge, -p, '{"spec":{"trafficPolicy":null}}']
   - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v1, --timeout=180s]
   - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/payments-v2, --timeout=180s]
 settle: 120s

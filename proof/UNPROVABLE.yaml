@@ -39,3 +39,26 @@ unprovable:
       the calibration gate recommends for every threshold that is right for one
       cluster and wrong for the rest. That is a catalog change, and it needs its
       own validation.
+
+  - entry: mtls-policy-conflict
+    reason: >
+      Measured on 2026-08-19, and the finding is larger than a testbed limit.
+      STRICT mTLS was applied to the sidecar-mode namespace with an unenrolled
+      plaintext caller. The caller was genuinely rejected (curl exit 56, the
+      connection reset) and the mesh recorded nothing at all: no
+      istio_requests_total with the 503 and UF/URX this entry's signal reads,
+      and no istio_tcp_connections_closed_total either, while the in-mesh
+      loadgen kept reporting 200s at 7.7 rps from the same namespace. A sidecar
+      drops the connection at the TLS layer before any metric exists to stamp.
+      Cross-checked against every recorded run in this repository and the
+      benchmark: the only entry that has ever fired for this class is
+      mtls-policy-conflict-ambient. This one has never fired anywhere.
+    would_become_provable_if: >
+      Nothing about the testbed would fix it, which is why this needs a
+      decision rather than more work. The entry looks for a signal a sidecar
+      does not emit, so it is probably dead by construction on any sidecar
+      mesh, and the honest options are to rework its signal onto telemetry that
+      exists or to retire it. Either is a catalog change and needs its own
+      review. The measurement also strengthens F1: ambient's ztunnel records
+      this denial at L4 and a sidecar records nothing, which is a contrast the
+      claim previously asserted and can now cite.

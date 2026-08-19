@@ -54,9 +54,21 @@ type Spec struct {
 	// Inject and Reset are the commands that create and remove the fault.
 	// Reset runs even when the proof fails, so a failed run does not leave a
 	// broken testbed behind for the next one to inherit.
+	//
+	// Reset commands must be idempotent. Reset runs twice on a passing proof,
+	// once to prove the incident closes and once in the deferred cleanup, so a
+	// command that errors when its work is already done fails a proof whose
+	// entry did everything right. Prefer `patch --type=merge` with a null over
+	// a JSON `remove` op, and `delete --ignore-not-found` over a bare delete.
 	Inject []Command `yaml:"inject"`
 	Reset  []Command `yaml:"reset"`
 
+	// Warmup, when set, ticks the detector against healthy traffic before the
+	// fault is injected, so a relative-threshold entry has a learned baseline
+	// to fire against. Without it such an entry falls back to its static
+	// threshold, and for the latency entry that threshold is high enough that
+	// reaching it also trips the canary entry, which suppresses the subject.
+	Warmup Duration `yaml:"warmup"`
 	// Settle is how long to wait after injecting before the clock on
 	// FiresWithin starts, for rate windows to fill. Defaults to 0.
 	Settle Duration `yaml:"settle"`

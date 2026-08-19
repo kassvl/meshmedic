@@ -5,12 +5,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"os/exec"
 	"sort"
 	"strings"
 	"text/template"
 	"time"
 
+	"github.com/kassvl/meshmedic/pkg/baseline"
 	"github.com/kassvl/meshmedic/pkg/catalog"
 	"github.com/kassvl/meshmedic/pkg/detect"
 	"github.com/kassvl/meshmedic/pkg/kube"
@@ -66,6 +68,15 @@ type Runner struct {
 	Poll time.Duration
 	// Sleep waits, injected so tests do not.
 	Sleep func(context.Context, time.Duration)
+
+	// Baseline lets a relative-threshold entry be proven. Without one the
+	// detector falls back to the static threshold, and for
+	// latency-regression-vs-baseline that means the fault has to exceed 1000ms
+	// to fire, which also puts canary-latency-rollback in breach, which
+	// suppresses the very entry under proof. The only honest proof of a
+	// relative threshold warms a baseline first and then fires below the
+	// static fallback.
+	Baseline detect.BaselineStore
 
 	// Objects and Triage give the detector the same cluster reads the CLI
 	// wires. Nil means configuration, log and rollout evidence are skipped,
@@ -221,6 +232,39 @@ func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 		res.Failures = append(res.Failures,
 			"BLIND: "+reason+" — this run says nothing about the entry, and no fault was injected")
 		return res
+	}
+
+	// Warm-up, before the fault. A relative threshold cannot be proven against
+	// a cold baseline: the detector falls back to the static number, and for
+	// the latency entry that number is high enough that firing it also fires
+	// the canary entry, which suppresses it.
+	if s.Warmup.D() > 0 {
+		if r.Baseline == nil {
+			r.Baseline = baseline.New("", 0.05)
+		}
+		// Learn from the floor, not from whatever the cluster happened to be
+		// doing when warm-up started. A previous proof's fault decays out of a
+		// two-minute rate window slowly, and the preflight cannot catch it
+		// because a decaying 480ms is still far under a 1000ms static
+		// threshold. Warming on that tail teaches the entry a normal three
+		// times too high, and it then sleeps through the very regression it
+		// exists to catch. Measured: a run warmed on a decaying cluster failed
+		// to fire at 486ms.
+		//
+		// So the warm-up watches the signal settle and only trusts readings
+		// near the lowest it has seen. The floor is what healthy means.
+		r.Log("warming the baseline for %s, learning from the signal's floor", s.Warmup.D())
+		warm := r.detectorFor(s)
+		gate := &floorCollector{inner: r.Baseline, tolerance: 1.5}
+		warm.Baseline = gate
+		r.onIncident = func(detect.Incident) {}
+		deadline := r.Now().Add(s.Warmup.D())
+		for r.Now().Before(deadline) && ctx.Err() == nil {
+			warm.Tick(ctx, r.Now())
+			r.Sleep(ctx, r.Poll)
+		}
+		gate.commit()
+		r.Log("baseline warmed: %d readings near the floor accepted, %d rejected as still-decaying", gate.accepted, gate.rejected)
 	}
 
 	r.Log("injecting the fault")
@@ -520,7 +564,11 @@ func (r *Runner) detectorFor(s Spec) *detect.Detector {
 			}
 			return nil
 		})
-	d.Log = func(string, ...any) {}
+	// Surface the detector's own diagnostics. Discarding them threw away the
+	// one line that explains a non-firing entry: latency-regression-vs-baseline
+	// failed a proof and the reason, "suppressed by canary-latency-rollback",
+	// was printed by the detector and swallowed here.
+	d.Log = func(format string, args ...any) { r.Log("detector: "+format, args...) }
 	d.Now = r.Now
 	// The prover must build the same detector the CLI does, or a proof is
 	// weaker than the thing it claims to prove. Without a cluster reader the
@@ -530,6 +578,7 @@ func (r *Runner) detectorFor(s Spec) *detect.Detector {
 	// and be marked as passing on metric evidence alone.
 	d.Objects = r.Objects
 	d.Triage = r.Triage
+	d.Baseline = r.Baseline
 	return d
 }
 
@@ -544,4 +593,55 @@ func renderQuery(name, promql string, params map[string]string) (string, error) 
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+// floorCollector gathers warm-up readings without teaching them to anything,
+// then feeds the real store only the ones near the window's floor.
+//
+// Two passes, and the reason is a bug the one-pass version had: a cluster
+// decaying out of a previous fault produces a monotonically falling sequence,
+// so every reading is the lowest seen so far and a running-minimum filter
+// accepts all of them. The floor is only knowable once the window is over.
+//
+// The floor is what healthy means. Warming on the tail teaches a normal
+// several times too high, and an entry whose normal is wrong sleeps through
+// the regression it exists to catch: measured live, a run warmed on a cluster
+// decaying from 488ms then failed to fire at 486ms.
+type floorCollector struct {
+	inner              detect.BaselineStore
+	tolerance          float64
+	seen               map[string][]float64
+	accepted, rejected int
+}
+
+func (c *floorCollector) Observe(key string, value float64) {
+	if c.seen == nil {
+		c.seen = map[string][]float64{}
+	}
+	c.seen[key] = append(c.seen[key], value)
+}
+
+// Baseline during collection reports not-ready, so the detector keeps using
+// the static threshold and keeps observing rather than deciding on a normal
+// that has not been established yet.
+func (c *floorCollector) Baseline(string, int) (float64, bool) { return 0, false }
+
+// commit teaches the real store the readings near each key's floor.
+func (c *floorCollector) commit() {
+	for key, vals := range c.seen {
+		floor := math.Inf(1)
+		for _, v := range vals {
+			if v < floor {
+				floor = v
+			}
+		}
+		for _, v := range vals {
+			if floor > 0 && v > floor*c.tolerance {
+				c.rejected++
+				continue
+			}
+			c.accepted++
+			c.inner.Observe(key, v)
+		}
+	}
 }
