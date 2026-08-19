@@ -37,6 +37,26 @@ headroom. The first reading would have prompted a threshold change the second
 shows was never needed, which is why the documentation insists the cluster be
 warm before the result is believed.
 
+## The marginal verdicts were right, measured twice over
+
+The gate called `latency-regression-vs-baseline` marginal on `payments.demo`
+at 1.35x headroom. Two later end-to-end proof runs measured its learned normal
+independently and put a number on what marginal costs: **169.9ms on one run
+and 208.4ms on the next**, a 23 percent swing between two idle windows on the
+same untouched cluster.
+
+That variance is not noise in the measurement, it is the signal. This service
+calls a downstream `ledger` on every request, so its p99 carries a whole
+network hop and moves with it. A 3x multiplier on a normal that swings 23
+percent puts the effective threshold anywhere between 510ms and 625ms, which
+means a fault sized to prove the entry on Monday may not prove it on Tuesday.
+
+Two things follow. An entry whose learned normal is itself unstable needs
+either a wider multiplier or a steadier signal, and the gate cannot see that
+from a single window: it measures headroom against one baseline, not the
+baseline's own variance. Measuring the spread of the learned normal across
+windows is the natural next thing for this check to do.
+
 ## The limit this run made concrete
 
 44 of 57 entry/target pairs came back `unmeasured`, almost all of them for the
