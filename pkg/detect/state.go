@@ -87,6 +87,9 @@ func (c Cycle) Healthy() bool { return c.Unobserved == 0 }
 type persistedEntry struct {
 	State state     `json:"state"`
 	Since time.Time `json:"since"`
+	// Applies carries the guardrail's rolling window across restarts, so
+	// bouncing the process cannot be used to get around maxAppliesPerHour.
+	Applies []time.Time `json:"applies,omitempty"`
 }
 
 // SaveState writes the detector's incident lifecycle to disk, atomically.
@@ -105,10 +108,10 @@ func (d *Detector) SaveState(path string) error {
 		// Only a live episode is worth carrying across a restart. An
 		// inactive entry is the default on load, so writing it would grow
 		// the file forever for no gain.
-		if e.state == inactive {
+		if e.state == inactive && len(e.applies) == 0 {
 			continue
 		}
-		snapshot[key] = persistedEntry{State: e.state, Since: e.since}
+		snapshot[key] = persistedEntry{State: e.state, Since: e.since, Applies: e.applies}
 	}
 	data, err := json.MarshalIndent(snapshot, "", "  ")
 	if err != nil {
@@ -155,7 +158,7 @@ func (d *Detector) LoadState(path string) error {
 		return fmt.Errorf("state: %s: %w", path, err)
 	}
 	for key, p := range snapshot {
-		d.states[key] = &entry{state: p.State, since: p.Since}
+		d.states[key] = &entry{state: p.State, since: p.Since, applies: p.Applies}
 	}
 	return nil
 }

@@ -17,3 +17,7 @@ jobs:
       - run: go vet ./...
       - run: go test ./...
       - run: go run ./cmd/meshmedic validate
+      # The lock is the difference between accepted and merely committed:
+      # an approved entry that was edited without re-approval must not reach
+      # main pretending to be reviewed.
+      - run: go run ./cmd/meshmedic validate --no-drift

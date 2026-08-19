@@ -1,0 +1,142 @@
+{
+  "version": 1,
+  "digest": "sha256:8d87276f3c0cd02c298604ef5a81c9109c322af3192aa9e5f1448b314a5d975c",
+  "entries": {
+    "authz-deny-flood": {
+      "sha256": "sha256:ad72c9e7cb7d96883fb8a3ea3daba45b3b5a9c112d722c925a433437911683e0",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    },
+    "canary-latency-rollback": {
+      "sha256": "sha256:2d51baefd02c815adbf99093ca5839fb14e47083ee1fe9a7adeddf746ccfeb78",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    },
+    "connection-pool-overflow": {
+      "sha256": "sha256:aa2fc8369e881e34170709d391ea58f6602ae40f85612000678bcff4aed41123",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    },
+    "error-surge-outlier-ejection": {
+      "sha256": "sha256:3ab65bf00528cccaeb0976cc819df74d250cd52b0c15cebd8c6b674ce3982d07",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    },
+    "external-authz-denial": {
+      "sha256": "sha256:c62d98bfa265091df7035810c15132de2b05780f3ae6cc8b0471d3ef977715c8",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    },
+    "fault-injection-left-in-production": {
+      "sha256": "sha256:5105e1379b68765a87f627e59aab0d93960d10c1b6672ab0791c45aee8ece9e2",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    },
+    "ingress-edge-outage": {
+      "sha256": "sha256:7352114f076230e0bdceecbd278be5cec472343d2abf1d88b5bc95cfd15115a6",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    },
+    "latency-regression-vs-baseline": {
+      "sha256": "sha256:df0c7dd08bb78e57f5d9e1bb8030d231004f69d9f3354c3afc42a6ce41d32cc1",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    },
+    "mtls-policy-conflict": {
+      "sha256": "sha256:b08d0250038bcaebbc056ec9dcd43b08478f8e0aec43b94cc21b4cf838b4d92b",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    },
+    "mtls-policy-conflict-ambient": {
+      "sha256": "sha256:0718650bc5d85b6e3540a7b0a069fd42a4c93e9762eccf921c7020a8fb65b995",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    },
+    "no-route-blackhole": {
+      "sha256": "sha256:a8e9942ad0cbf7bfe9072ed7dd035e791c2d544b08bca96c9c89fa7951d9a832",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    },
+    "rate-limit-throttling": {
+      "sha256": "sha256:66c80de5674fc00a2af1af373bdc59a46351bf5c8a372a0c8bb140a056de775b",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    },
+    "route-timeout-too-short": {
+      "sha256": "sha256:cae9e547f9848f3137882cc35b46f87d6726b2008c6f5a32048012f05a6fb3a0",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    },
+    "traffic-vanished-triage": {
+      "sha256": "sha256:7e47051f672e719962f07689488224f4ce641c2f9229ba88b5b163c423e94a85",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    },
+    "upstream-dependency-errors": {
+      "sha256": "sha256:2bd7732813e5fc5cfff7afc079ef3b12207631c0ee6e3b808c7eace42e852488",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    },
+    "upstream-dependency-latency": {
+      "sha256": "sha256:112340f42d5db8b0ad5e1df608880990a6d2c7daf1107d90d3874f7fff16a4d3",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    },
+    "upstream-host-ejection-flood": {
+      "sha256": "sha256:d0df94442412237e4975f39dc6a13ea0702132c389bcc09e6fa348b169b2d7fa",
+      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "validated_against": {
+        "istio": "1.24.1",
+        "testbed": "0b41872"
+      }
+    }
+  }
+}

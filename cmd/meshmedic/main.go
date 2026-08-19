@@ -15,6 +15,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sort"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -50,6 +51,8 @@ func main() {
 		runWatch(os.Args[2:])
 	case "check":
 		runCheck(os.Args[2:])
+	case "approve":
+		runApprove(os.Args[2:])
 	case "version", "--version", "-v":
 		fmt.Println("meshmedic", version)
 	default:
@@ -64,6 +67,8 @@ func usage() {
   meshmedic render --scenario id --set key=value [--set ...] [--catalog dir]
   meshmedic watch --config watch.yaml [--catalog dir]
   meshmedic watch --prometheus URL --target k=v,k=v [--target ...] [--interval 30s]
+  meshmedic check --config watch.yaml            (exit 1 if any target is unobserved)
+  meshmedic approve --scenario id --istio 1.24.1 --testbed <commit> [--all]
 
 The second watch form needs no config file, which is the quickest way to point
 MeshMedic at a Prometheus you already run:
@@ -88,6 +93,8 @@ func defaultCatalogDir() string {
 func runValidate(args []string) {
 	fs := flag.NewFlagSet("validate", flag.ExitOnError)
 	dir := fs.String("catalog", defaultCatalogDir(), "catalog directory (or $MESHMEDIC_CATALOG)")
+	strict := fs.Bool("strict", false, "exit non-zero if any entry is unlocked (missing or edited)")
+	noDrift := fs.Bool("no-drift", false, "exit non-zero only if an approved entry was edited without re-approval")
 	fs.Parse(args)
 
 	scenarios, err := catalog.LoadDir(*dir)
@@ -102,6 +109,40 @@ func runValidate(args []string) {
 	}
 	w.Flush()
 	fmt.Printf("catalog OK: %d scenarios\n", len(scenarios))
+
+	// The lock standing is part of validation, not a separate concern: a
+	// catalog that loads but is half unapproved covers less than it looks.
+	unlocked, lock, err := lockStatuses(scenarios, defaultLockPath(*dir))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "lock invalid:", err)
+		os.Exit(1)
+	}
+	fmt.Println()
+	printLockReport(scenarios, lock, unlocked)
+	fmt.Printf("\n%d of %d entries are locked and will run\n", len(scenarios)-len(unlocked), len(scenarios))
+	if *strict && len(unlocked) > 0 {
+		fmt.Fprintf(os.Stderr, "\n--strict: %d entries are not the entries that were approved\n", len(unlocked))
+		os.Exit(1)
+	}
+	// --no-drift is the CI gate, and it asks a narrower question than
+	// --strict: not "is everything approved" but "did an approved entry
+	// change without being re-approved". An entry that was never approved is
+	// a known, visible state; one that was approved and then edited is the
+	// silent failure the lock exists to catch.
+	if *noDrift {
+		drifted := 0
+		for id, reason := range unlocked {
+			if _, everApproved := lock.Entries[id]; everApproved {
+				fmt.Fprintf(os.Stderr, "DRIFT %s: %s\n", id, reason)
+				drifted++
+			}
+		}
+		if drifted > 0 {
+			fmt.Fprintf(os.Stderr, "\n--no-drift: %d approved entries were edited without re-approval; run `meshmedic approve` after re-validating them on a testbed\n", drifted)
+			os.Exit(1)
+		}
+		fmt.Println("no drift: every approved entry is still the entry that was approved")
+	}
 }
 
 func runRender(args []string) {
@@ -153,6 +194,7 @@ func runWatch(args []string) {
 	cfgPath := fs.String("config", "", "watch config file (default watch.yaml when --prometheus is not given)")
 	promURL := fs.String("prometheus", "", "Prometheus base URL; with --target this replaces the config file")
 	interval := fs.String("interval", "", "evaluation interval, e.g. 30s (flag form only)")
+	strict := fs.Bool("strict", false, "refuse to start if any catalog entry is unlocked")
 	var targets multiFlag
 	fs.Var(&targets, "target", "target params as key=value,key=value (repeatable, flag form only)")
 	fs.Parse(args)
@@ -246,9 +288,37 @@ func runWatch(args []string) {
 		return nil
 	}
 
+	// An entry whose hash is missing or stale is not the entry that was
+	// reviewed and testbed-validated, so it does not run. Reported loudly
+	// rather than dropped: an operator has to learn which part of the catalog
+	// is not covering them.
+	unlocked, _, err := lockStatuses(scenarios, defaultLockPath(*dir))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "lock invalid:", err)
+		os.Exit(1)
+	}
+	if len(unlocked) > 0 {
+		ids := make([]string, 0, len(unlocked))
+		for id := range unlocked {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		if *strict {
+			fmt.Fprintf(os.Stderr, "--strict: refusing to start, %d of %d entries are unlocked: %v\n",
+				len(unlocked), len(scenarios), ids)
+			os.Exit(1)
+		}
+		for _, id := range ids {
+			logger.Printf("UNLOCKED %s: %s", id, unlocked[id])
+		}
+		logger.Printf("%d of %d entries will not run because they are unlocked; run `meshmedic approve` after validating them",
+			len(unlocked), len(scenarios))
+	}
+
 	d := detect.New(scenarios, cfg.Targets, prom.NewClient(cfg.Prometheus), handler)
 	d.Log = logger.Printf
 	d.CoverageProbe = cfg.CoverageProbe
+	d.Unlocked = unlocked
 	// Coverage every cycle, including the good ones. A number that only shows
 	// up when it is bad is a number nobody learns to read, and the invariant
 	// this enforces is that silence is only ever reported as an answer when

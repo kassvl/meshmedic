@@ -986,3 +986,142 @@ func (f valueByQueryFunc) QuerySeries(_ context.Context, promql string) ([]prom.
 	}
 	return []prom.Sample{{Value: v}}, nil
 }
+
+// The audit's B-2: every one of the 19 catalog entries declares a
+// maxAppliesPerHour, and until now nothing in the codebase read it. The
+// safety story promised a rate limit the code did not implement.
+func TestGuardrailLimitsAppliesPerHour(t *testing.T) {
+	s := testScenario()
+	s.Signal.For = ""
+	s.Guardrails.MaxAppliesPerHour = 2
+
+	clock := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	var fired []Incident
+	// A flapping signal: breaching, clear, breaching, clear... so each breach
+	// is a fresh episode that would deliver again without a guardrail.
+	breaching := true
+	q := valueByQueryFunc(func(promql string) (float64, error) {
+		if promql == testProbe {
+			return 1, nil
+		}
+		if breaching {
+			return 1, nil
+		}
+		return 0, nil
+	})
+	d := New([]catalog.Scenario{s},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{"service": "payments"}}},
+		q, func(_ context.Context, inc Incident) error { fired = append(fired, inc); return nil })
+	d.Now = func() time.Time { return clock }
+
+	flap := func() {
+		breaching = true
+		d.Tick(context.Background(), clock)
+		breaching = false
+		clock = clock.Add(time.Minute)
+		d.Tick(context.Background(), clock)
+		clock = clock.Add(time.Minute)
+	}
+	for i := 0; i < 5; i++ {
+		flap()
+	}
+	if len(fired) != 2 {
+		t.Fatalf("delivered %d incidents across 5 breach episodes, want 2: the guardrail is %d/hour",
+			len(fired), s.Guardrails.MaxAppliesPerHour)
+	}
+
+	// Once the rolling hour clears, the budget comes back.
+	clock = clock.Add(61 * time.Minute)
+	flap()
+	if len(fired) != 3 {
+		t.Errorf("delivered %d after the window cleared, want 3: the limit is per hour, not forever", len(fired))
+	}
+}
+
+// A guardrail you can get around by bouncing the process is not a guardrail.
+func TestGuardrailWindowSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	s := testScenario()
+	s.Signal.For = ""
+	s.Guardrails.MaxAppliesPerHour = 1
+	target := Target{CoverageProbe: testProbe, Params: map[string]string{"service": "payments"}}
+
+	clock := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	breaching := true
+	q := valueByQueryFunc(func(promql string) (float64, error) {
+		if promql == testProbe || breaching {
+			return 1, nil
+		}
+		return 0, nil
+	})
+	run := func(fired *[]Incident) {
+		d := New([]catalog.Scenario{s}, []Target{target}, q,
+			func(_ context.Context, inc Incident) error { *fired = append(*fired, inc); return nil })
+		d.Now = func() time.Time { return clock }
+		d.StateFile = path
+		if err := d.LoadState(path); err != nil {
+			t.Fatalf("LoadState: %v", err)
+		}
+		breaching = true
+		d.Tick(context.Background(), clock)
+		breaching = false
+		clock = clock.Add(time.Minute)
+		d.Tick(context.Background(), clock)
+		clock = clock.Add(time.Minute)
+		if err := d.SaveState(path); err != nil {
+			t.Fatalf("SaveState: %v", err)
+		}
+	}
+
+	var first, second []Incident
+	run(&first)
+	if len(first) != 1 {
+		t.Fatalf("first process delivered %d, want 1", len(first))
+	}
+	run(&second)
+	if len(second) != 0 {
+		t.Errorf("a restart bought %d extra applies past a 1/hour guardrail", len(second))
+	}
+}
+
+// A blocked apply must not become a silent drop: a guardrail that hides what
+// it stopped is its own fail-open.
+func TestGuardrailSaysWhatItBlocked(t *testing.T) {
+	s := testScenario()
+	s.Signal.For = ""
+	s.Guardrails.MaxAppliesPerHour = 1
+
+	clock := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	var logged []string
+	breaching := true
+	q := valueByQueryFunc(func(promql string) (float64, error) {
+		if promql == testProbe || breaching {
+			return 1, nil
+		}
+		return 0, nil
+	})
+	d := New([]catalog.Scenario{s},
+		[]Target{{CoverageProbe: testProbe, Params: map[string]string{}}},
+		q, func(context.Context, Incident) error { return nil })
+	d.Now = func() time.Time { return clock }
+	d.Log = func(format string, args ...any) { logged = append(logged, fmt.Sprintf(format, args...)) }
+
+	for i := 0; i < 2; i++ {
+		breaching = true
+		d.Tick(context.Background(), clock)
+		breaching = false
+		clock = clock.Add(time.Minute)
+		d.Tick(context.Background(), clock)
+		clock = clock.Add(time.Minute)
+	}
+
+	var found bool
+	for _, line := range logged {
+		if strings.Contains(line, "guardrail hit") && strings.Contains(line, "still breaching") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the guardrail blocked an apply without saying so; logged: %v", logged)
+	}
+}

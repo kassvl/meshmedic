@@ -175,6 +175,26 @@ type entry struct {
 	// as not applicable (signal needs a param the target does not define),
 	// so a whole-catalog watch logs the skip once instead of every tick.
 	paramSkipLogged bool
+	// applies is the rolling record of when this scenario last delivered an
+	// incident for this target, which is what makes the catalog's
+	// maxAppliesPerHour guardrail an actual limit rather than documentation.
+	// It persists with the rest of the state, so restarting the process
+	// cannot be used, deliberately or accidentally, to get around the limit.
+	applies []time.Time
+}
+
+// withinLastHour returns how many applies fall inside the trailing hour from
+// now, pruning the rest in place so the slice cannot grow without bound.
+func (e *entry) withinLastHour(now time.Time) int {
+	cutoff := now.Add(-time.Hour)
+	kept := e.applies[:0]
+	for _, at := range e.applies {
+		if at.After(cutoff) {
+			kept = append(kept, at)
+		}
+	}
+	e.applies = kept
+	return len(kept)
 }
 
 // Detector evaluates targets against scenarios on every Tick.
@@ -225,6 +245,18 @@ type Detector struct {
 	// Empty disables persistence, which means a restart re-opens every
 	// still-breaching incident.
 	StateFile string
+
+	// Now overrides the clock used for guardrail windows. Nil uses the real
+	// clock; tests set it so a rolling hour does not take an hour.
+	Now func() time.Time
+
+	// Unlocked names scenarios whose catalog.lock hash is missing or does not
+	// match, mapped to the reason. Such an entry does not run: what is on
+	// disk is not what was reviewed and testbed-validated, and the difference
+	// between accepted and merely committed is the whole point of the lock.
+	// It is reported every cycle rather than dropped, so an operator learns
+	// which part of the catalog is not covering them.
+	Unlocked map[string]string
 
 	// Log receives non-fatal evaluation problems (template errors, query
 	// failures). Defaults to discarding them; the CLI wires it to stderr.
@@ -307,6 +339,12 @@ func (d *Detector) Tick(ctx context.Context, now time.Time) Cycle {
 				continue
 			}
 			key := targetKey(s.ID, t.Params)
+
+			if reason, unlocked := d.Unlocked[s.ID]; unlocked {
+				cycle.record(Evaluation{Scenario: s.ID, Params: t.Params,
+					Outcome: OutcomeUnlocked, Reason: reason})
+				continue
+			}
 
 			if !observed {
 				// The scenario cannot be evaluated honestly, and this
@@ -605,6 +643,27 @@ func targetKey(scenarioID string, params map[string]string) string {
 
 func (d *Detector) deliver(ctx context.Context, key string, s catalog.Scenario, t Target, value float64) {
 	st := d.states[key]
+
+	// The catalog's maxAppliesPerHour guardrail, enforced. Every entry
+	// declares one and, until now, nothing read it: the safety story
+	// promised a rate limit the code did not implement. A limit of zero or
+	// less means unlimited, which is what an entry that omits the field is
+	// asking for.
+	//
+	// Hitting the limit does not silence the incident, because a guardrail
+	// that hides what it blocked is its own fail-open. It stops the handler
+	// from proposing another change and says so loudly; the operator still
+	// learns the signal is breaching, and learns that MeshMedic has stopped
+	// proposing fixes for it.
+	if limit := s.Guardrails.MaxAppliesPerHour; limit > 0 {
+		if n := st.withinLastHour(d.now()); n >= limit {
+			d.Log("%s: guardrail hit, %d of %d applies used in the last hour; the signal is still breaching at %.4g but no further change will be proposed until the window clears",
+				key, n, limit, value)
+			st.state = firing
+			return
+		}
+	}
+
 	threshold := d.effectiveThreshold(s, t)
 	relative := d.Baseline != nil && s.Signal.BaselineMultiplier > 0 && threshold != s.Signal.Threshold
 	err := d.handle(ctx, Incident{
@@ -623,7 +682,19 @@ func (d *Detector) deliver(ctx context.Context, key string, s catalog.Scenario, 
 		d.Log("%s: handler failed, keeping the episode for retry: %v", key, err)
 		return
 	}
+	// Count the apply only once the handler has taken it. A pull request that
+	// never opened must not consume the entry's hourly budget.
+	st.applies = append(st.applies, d.now())
 	st.state = firing
+}
+
+// now is the detector's clock, injectable so the guardrail's rolling hour is
+// testable without sleeping. Nil means the real clock.
+func (d *Detector) now() time.Time {
+	if d.Now != nil {
+		return d.Now()
+	}
+	return time.Now()
 }
 
 // resolve reports a firing incident's recovery. Best effort: a failing

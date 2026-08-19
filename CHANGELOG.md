@@ -25,6 +25,25 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   incidents that are still open. The state key is derived from the target's
   parameters rather than its position in the config, so reordering the target
   list does not reassign open incidents either.
+- **`catalog.lock` and `meshmedic approve`.** The catalog directory was both
+  the editable surface and the enforced artifact, so nothing established that
+  the entry running was the entry that was reviewed and testbed-validated. The
+  lock records a content hash per entry plus what it was validated against
+  (Istio version, testbed commit). An entry whose hash is missing or stale is
+  `unlocked`: it does not run, and it is reported every cycle rather than
+  dropped. `watch --strict` and `validate --strict` refuse outright;
+  `validate --no-drift` is the CI gate and fails only when an *approved* entry
+  was edited without re-approval. `approve` is the only writer, is human-only,
+  and refuses an entry with no recorded validation.
+  The hash covers the parsed entry rather than the file bytes, so reformatting,
+  reordering keys, or editing a comment does not invalidate an approval, while
+  any change to a threshold, query, patch template, or guardrail does.
+- **`maxAppliesPerHour` is enforced.** All nineteen entries declared an hourly
+  limit and no code read it; the safety story promised a rate limit that did
+  not exist. The limit now applies per scenario and target, its window
+  persists with the rest of the state so restarting the process cannot buy
+  extra applies, and hitting it logs loudly rather than silently dropping the
+  incident.
 - **Config-free watch.** `meshmedic watch --prometheus URL --target k=v,k=v`
   runs against a Prometheus you already have, with no YAML file and no demo
   testbed. Opening pull requests still requires a config file, deliberately:
