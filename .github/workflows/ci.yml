@@ -21,3 +21,24 @@ jobs:
       # an approved entry that was edited without re-approval must not reach
       # main pretending to be reviewed.
       - run: go run ./cmd/meshmedic validate --no-drift
+
+  # The image build was never exercised until a tag tried to publish it, and it
+  # failed there: narrowing a COPY to keep the fault-injection binary out of the
+  # image had dropped the file that embeds the catalog. A release is the worst
+  # place to discover a broken Dockerfile, so it builds on every pull request
+  # now. No push, no registry credentials, just proof that it compiles.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: meshmedic:ci
+      - name: the image runs and carries its catalog
+        run: |
+          docker run --rm meshmedic:ci version
+          docker run --rm meshmedic:ci validate | tail -1

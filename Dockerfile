@@ -24,6 +24,14 @@ RUN go mod download
 # fault-injection harness and has no business inside a read-only image.
 COPY cmd/meshmedic/ cmd/meshmedic/
 COPY pkg/ pkg/
+# builtin.go embeds the reviewed catalog and its lock into the binary, so both
+# have to be present at compile time and not merely copied into the final
+# image. Narrowing the COPY above to exclude the prover once dropped these and
+# the build failed on the tag, which is the argument for building the image in
+# the same pass that changes it.
+COPY builtin.go ./
+COPY catalog/ catalog/
+COPY catalog.lock ./
 
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
     go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" \
