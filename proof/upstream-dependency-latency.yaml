@@ -1,0 +1,27 @@
+entry: upstream-dependency-latency
+summary: >
+  The downstream ledger answers in 300ms, so payments is slow while doing
+  nothing wrong. The latency counterpart to a dependency's errors: the caller
+  sees a slow front service, and the time is spent waiting one hop down.
+target:
+  service: payments
+  namespace: demo
+  workload: payments-v2
+  subset: v2
+  stable_subset: v1
+inject:
+  - desc: make the downstream ledger slow
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/ledger, TIMING_50_PERCENTILE=300ms]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/ledger, --timeout=180s]
+reset:
+  - desc: restore the ledger
+    run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/ledger, TIMING_50_PERCENTILE=10ms]
+  - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/ledger, --timeout=180s]
+settle: 90s
+firesWithin: 5m
+resolvesWithin: 5m
+expect:
+  names:
+    - ledger
+  quiet:
+    - latency-regression-vs-baseline

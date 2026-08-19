@@ -20,7 +20,9 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY cmd/ cmd/
+# Only the detector's source is copied; cmd/meshmedic-prove is a maintainer's
+# fault-injection harness and has no business inside a read-only image.
+COPY cmd/meshmedic/ cmd/meshmedic/
 COPY pkg/ pkg/
 
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \

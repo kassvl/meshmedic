@@ -10,6 +10,10 @@ before:
     - go run ./cmd/meshmedic validate
 
 builds:
+  # Only the detector ships. cmd/meshmedic-prove injects faults into a cluster
+  # and is a maintainer's test harness; shipping it alongside a tool whose
+  # central claim is that it holds no write credentials would undermine the
+  # claim even though the detection path is untouched.
   - id: meshmedic
     main: ./cmd/meshmedic
     binary: meshmedic
