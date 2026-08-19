@@ -2,7 +2,7 @@
 
 Scenario `error-surge-outlier-ejection` (severity critical) fired for `namespace=demo` `service=payments` `stable_subset=v1` `subset=v2` `workload=payments-v2`.
 
-The signal has held at **0.1904** (threshold > 0.15 for 120s) since 2026-08-19T07:13:56Z.
+The signal has held at **0.1675** (threshold > 0.15 for 120s) since 2026-08-19T14:33:51Z.
 
 ### Diagnosis
 
@@ -12,9 +12,10 @@ A service's 5xx ratio holds above 15 percent. When the errors come from a subset
 
 | query | value |
 | --- | --- |
-| errors-by-workload{destination_workload="payments-v2"} | 0.7523 |
-| requests-by-workload{destination_workload="payments-v1"} | 3.2 |
-| requests-by-workload{destination_workload="payments-v2"} | 0.7523 |
+| errors-by-workload{destination_workload="payments-v2"} | 0.6667 |
+| errors-by-workload{destination_workload="payments-v1"} | 0 |
+| requests-by-workload{destination_workload="payments-v1"} | 3.314 |
+| requests-by-workload{destination_workload="payments-v2"} | 0.6667 |
 
 ### Configuration evidence
 

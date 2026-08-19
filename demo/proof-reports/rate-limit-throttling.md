@@ -2,7 +2,7 @@
 
 Scenario `rate-limit-throttling` (severity warning) fired for `namespace=demo` `service=payments` `stable_subset=v1` `subset=v2` `workload=payments-v2`.
 
-The signal has held at **3.133** (threshold > 0.5 for 60s) since 2026-08-19T07:28:41Z.
+The signal has held at **2.724** (threshold > 0.5 for 60s) since 2026-08-19T13:32:42Z.
 
 ### Diagnosis
 
@@ -12,7 +12,7 @@ Requests to the service are being rejected with HTTP 429 and the RL (rate limite
 
 | query | value |
 | --- | --- |
-| throttled-by-source{source_workload="ingress-istio"} | 1.628 |
+| throttled-by-source{source_workload="ingress-istio"} | 1.375 |
 
 ### Configuration evidence
 

@@ -2,7 +2,7 @@
 
 Scenario `upstream-dependency-latency` (severity warning) fired for `namespace=demo` `service=payments` `stable_subset=v1` `subset=v2` `workload=payments-v2`.
 
-The signal has held at **498.9** (threshold > 200 for 90s) since 2026-08-19T04:54:46Z.
+The signal has held at **498.2** (threshold > 200 for 90s) since 2026-08-19T14:01:54Z.
 
 ### Diagnosis
 
@@ -12,7 +12,7 @@ The watched service is slow, but the latency is not its own: its calls to a down
 
 | query | value |
 | --- | --- |
-| dependency-latency-p99-ms{destination_service_name="ledger"} | 494.7 |
+| dependency-latency-p99-ms{destination_service_name="ledger"} | 495.6 |
 
 ### Proposed patch (Deployment)
 

@@ -2,7 +2,7 @@
 
 Scenario `upstream-dependency-errors` (severity critical) fired for `namespace=demo` `service=payments` `stable_subset=v1` `subset=v2` `workload=payments-v2`.
 
-The signal has held at **7.057** (threshold > 0.5 for 60s) since 2026-08-19T04:40:31Z.
+The signal has held at **6.923** (threshold > 0.5 for 60s) since 2026-08-19T13:54:19Z.
 
 ### Diagnosis
 
@@ -12,7 +12,7 @@ The watched service is returning 5xx to its callers, but the cause is not the se
 
 | query | value |
 | --- | --- |
-| failing-dependencies-by-service{destination_service_name="ledger"} | 3.708 |
+| failing-dependencies-by-service{destination_service_name="ledger"} | 3.667 |
 
 ### Proposed patch (Deployment)
 

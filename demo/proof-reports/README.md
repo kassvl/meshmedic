@@ -24,18 +24,46 @@ $ meshmedic-prove --entry <id> --yes-inject-faults --out demo/proof-reports
 
 ## Runs
 
-| entry | fired after | named | resolved after |
+Nine entries, each injected on the live testbed (kind + Istio 1.24.1) with a
+real detector watching. Every row is a full pass: fired inside its own hold
+duration, named the culprit, kept its declared neighbours quiet, and cleared
+when the fault was removed.
+
+| entry | fired after | the report named | resolved after |
 | --- | --- | --- | --- |
+| `authz-deny-flood` | 1m2s | the denied caller by its SPIFFE principal | 1m45s |
+| `canary-latency-rollback` | 1m36s | the canary subset against a 287ms stable comparison | 1m58s |
+| `error-surge-outlier-ejection` | 2m3s | `payments-v2` at a 0.67 error ratio | 42s |
+| `fault-injection-left-in-production` | 1m6s | the FI-stamped rate at 0.933 | 1m45s |
+| `rate-limit-throttling` | 1m2s | `ingress-istio` as the throttled caller | 1m44s |
+| `route-timeout-too-short` | 1m4s | the UT-timed-out rate at 1.915 | 1m45s |
+| `traffic-vanished-triage` | 1m40s | `loadgen`, its NXDOMAIN log line, and the rollout diff | not checked |
 | `upstream-dependency-errors` | 1m5s | `ledger` at 3.708 rps | 1m45s |
-| `upstream-dependency-latency` | 1m30s | `ledger` | 2m5s |
-| `error-surge-outlier-ejection` | 2m3s | `payments-v2` | 42s |
+| `upstream-dependency-latency` | 1m30s | `ledger` at 495.6ms p99 | 2m5s |
 
-`upstream-dependency-errors` also demonstrated its suppression working:
-`error-surge-outlier-ejection` stayed quiet while payments' own 5xx ratio was
-elevated by a fault one hop downstream, so the healthy front service was not
-blamed.
+Two suppressions were proven rather than asserted.
+`upstream-dependency-errors` kept `error-surge-outlier-ejection` quiet while
+payments' own 5xx ratio was elevated by a fault one hop downstream, so the
+healthy front service was not blamed. `canary-latency-rollback` kept
+`latency-regression-vs-baseline` quiet, a suppression that did not exist until
+these runs found the two firing together.
 
-## A bug these runs found in the prover itself
+Ten of nineteen entries still have no proof. `meshmedic-prove --list` prints
+the inventory and says so.
+
+## Running these yourself
+
+Run the prover in the background, not in a foreground shell with a timeout.
+Reset is a deferred call: Ctrl-C and SIGTERM run it, SIGKILL does not. A shell
+timeout that kills rather than signals will leave the fault applied, which
+happened here and left `payments-v2` serving 500s for twenty minutes.
+
+The next run catches it rather than compounding it. The preflight refuses to
+start while any catalog entry is already breaching, and that check is
+deliberately general: a resource scan would have reported the testbed clean,
+because this fault was an environment variable and left no object behind.
+
+## Bugs these runs found in the prover itself
 
 The first `error-surge-outlier-ejection` run reported FAIL: the entry fired and
 named the right workload, then never resolved. The entry was innocent. The

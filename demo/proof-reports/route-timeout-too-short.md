@@ -2,7 +2,7 @@
 
 Scenario `route-timeout-too-short` (severity critical) fired for `namespace=demo` `service=payments` `stable_subset=v1` `subset=v2` `workload=payments-v2`.
 
-The signal has held at **3.695** (threshold > 0.5 for 60s) since 2026-08-19T12:26:58Z.
+The signal has held at **3.752** (threshold > 0.5 for 60s) since 2026-08-19T13:39:58Z.
 
 ### Diagnosis
 
@@ -12,8 +12,8 @@ A VirtualService route timeout is shorter than the backend's real response time,
 
 | query | value |
 | --- | --- |
-| timed-out-rate | 1.904 |
-| backend-p99-latency-ms | 168 |
+| timed-out-rate | 1.915 |
+| backend-p99-latency-ms | 235.7 |
 
 ### Configuration evidence
 

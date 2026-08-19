@@ -155,6 +155,17 @@ func sleepCtx(ctx context.Context, d time.Duration) {
 // Run executes one proof end to end. Reset always runs, including on failure
 // and on a cancelled context, because a proof that leaves its fault behind
 // poisons every run after it.
+//
+// The guarantee has one hole worth naming, because it bit: reset is a
+// deferred call, and a deferred call does not run when the process is killed
+// outright. A proof interrupted by SIGKILL, or by a shell timeout that kills
+// rather than signals, leaves its fault applied. Ctrl-C and SIGTERM are fine;
+// the command handles both and resets.
+//
+// Nothing in this package can close that hole, so the preflight closes it from
+// the other side instead: the next run refuses to start while any entry is
+// already breaching, which catches a leftover fault of any shape, including
+// the env-var kind that leaves no object behind for a resource check to find.
 func (r *Runner) Run(ctx context.Context, s Spec) (res Result) {
 	start := r.Now()
 	wallStart := r.Wall()
