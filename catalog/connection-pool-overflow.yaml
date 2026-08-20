@@ -28,6 +28,25 @@ evidence:
       sum by (destination_workload) (rate(istio_requests_total{reporter=~"destination|waypoint", destination_service_name="{{.service}}",
       destination_service_namespace="{{.namespace}}"}[2m]))
 objectEvidence:
+  # The limit that is doing the shedding. This entry used to report only the
+  # Deployment below, which told an operator that a pool was exhausted while
+  # leaving the pool itself off the page: the number to change was in a
+  # DestinationRule the report never opened, so the dossier ended with a
+  # lookup rather than an answer. Measured on 2026-08-19, where the fault was
+  # `maxConnections: 1` and the report never said so.
+  #
+  # Every DestinationRule in the namespace is listed rather than one guessed
+  # by name, because the rule that binds a host is not obliged to be named
+  # after it, and the host field is what says which one applies.
+  - name: connection-pool-limits
+    apiVersion: networking.istio.io/v1
+    kind: DestinationRule
+    object: "*"
+    namespace: "{{.namespace}}"
+    fields:
+      - items[*].metadata.name
+      - items[*].spec.host
+      - items[*].spec.trafficPolicy.connectionPool
   # The saturation call (raise limits vs scale the workload) needs the
   # destination's configured resources next to the traffic numbers.
   - name: destination-resources

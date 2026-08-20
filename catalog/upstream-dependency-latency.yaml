@@ -21,8 +21,30 @@ signal:
     histogram_quantile(0.99, sum by (le) (rate(istio_request_duration_milliseconds_bucket{reporter=~"source|waypoint",
     source_app="{{.service}}", source_workload_namespace="{{.namespace}}"}[2m])))
   comparison: ">"
+  # Static only until the baseline warms up. 200ms was a guess about somebody
+  # else's cluster, and measurement on 2026-08-20 showed what that costs: on a
+  # genuinely idle testbed this signal peaks at 89ms, well under it, while
+  # ordinary cluster activity, a pod cycling or load shifting, pushes it to
+  # 433ms with no dependency problem at all. One number cannot serve both.
   threshold: 200
-  for: 90s
+  # The transient and the fault are not separable by height. Measured over the
+  # full benchmark suite, healthy peaks reach 433ms while the injected fault
+  # (a ledger at 300ms) reaches 493ms: a ratio of 1.14, which no threshold can
+  # split. They are separable by duration. Across every candidate threshold
+  # from 100ms to 300ms the longest unbroken healthy breach was 180s, so a
+  # five minute hold clears the worst observed transient by 1.7x while a real
+  # dependency regression, which does not stop, still reports.
+  #
+  # Five minutes is affordable here in a way it would not be elsewhere: this
+  # entry is a report-only dossier at warning severity. It proposes no patch
+  # and pages nobody, so the cost of waiting is a later dossier, and the cost
+  # of not waiting is a dossier about a dependency that was never slow.
+  for: 5m
+  # Fire at four times this service's own learned normal rather than at a
+  # fixed number. On the testbed that resolves to about 176ms against a 44ms
+  # baseline, which is well inside the 5m hold's tolerance for transients.
+  baselineMultiplier: 4
+  baselineMinSamples: 20
 evidence:
   # Which dependency is slow, biggest first: the report names the culprit one
   # hop downstream rather than the blocked service in front of it.

@@ -9,6 +9,12 @@ target:
   workload: payments-v2
   subset: v2
   stable_subset: v1
+# The entry now fires at four times its learned normal, so a cold run would
+# only ever exercise the static fallback and prove nothing about the change.
+# Warm up first: the collector learns from the signal's floor rather than from
+# whatever the cluster happened to be doing, because a previous fault decaying
+# out of a two-minute rate window teaches a normal several times too high.
+warmup: 5m
 inject:
   - desc: make the downstream ledger slow
     run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/ledger, TIMING_50_PERCENTILE=300ms]
@@ -18,7 +24,13 @@ reset:
     run: [kubectl, --context=kind-meshmedic-demo, -n, demo, set, env, deploy/ledger, TIMING_50_PERCENTILE=10ms]
   - run: [kubectl, --context=kind-meshmedic-demo, -n, demo, rollout, status, deploy/ledger, --timeout=180s]
 settle: 90s
-firesWithin: 5m
+# The entry's hold duration is five minutes, chosen so that ordinary cluster
+# activity cannot mature into a dossier. A proof has to outlast it: five
+# minutes to fire would be exactly the hold, leaving no room for the signal to
+# climb or for a tick to land, so the deadline is nine.
+firesWithin: 9m
+# Resolution has no hold: the episode closes on the first evaluation below the
+# threshold, so this stays where it was.
 resolvesWithin: 5m
 expect:
   names:
