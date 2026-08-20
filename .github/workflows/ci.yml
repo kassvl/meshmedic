@@ -65,13 +65,20 @@ jobs:
       - name: every archive carries what its binary needs to run
         run: |
           set -euo pipefail
-          det=$(ls dist/meshmedic_*_linux_amd64.tar.gz)
-          prv=$(ls dist/meshmedic-prove_*_linux_amd64.tar.gz)
+          # List each archive once into a file rather than piping tar into
+          # grep. `grep -q` exits at the first match and closes the pipe, tar
+          # takes a write error on the rest, and under pipefail that fails the
+          # step for a reason that has nothing to do with the archive. That is
+          # how this check failed the first time it ran.
+          tar tzf dist/meshmedic_*_linux_amd64.tar.gz > /tmp/det.txt
+          tar tzf dist/meshmedic-prove_*_linux_amd64.tar.gz > /tmp/prv.txt
+
           # A detector without its catalog and lock detects nothing; a prover
           # without its specs proves nothing. Assert the contents rather than
           # the exit code, because an empty archive builds perfectly well.
-          tar tzf "$det" | grep -q 'catalog.lock'
-          test "$(tar tzf "$det" | grep -c '^catalog/.*\.yaml$')" -ge 15
-          test "$(tar tzf "$prv" | grep -c '^proof/.*\.yaml$')" -ge 15
-          tar tzf "$prv" | grep -q 'hack/port-forward.sh'
-          echo "detector: $(tar tzf "$det" | wc -l) files, prover: $(tar tzf "$prv" | wc -l) files"
+          grep -q '^catalog\.lock$' /tmp/det.txt
+          test "$(grep -c '^catalog/.*\.yaml$' /tmp/det.txt)" -ge 15
+          test "$(grep -c '^proof/.*\.yaml$' /tmp/prv.txt)" -ge 15
+          grep -q '^hack/port-forward\.sh$' /tmp/prv.txt
+
+          echo "detector: $(wc -l < /tmp/det.txt) files, prover: $(wc -l < /tmp/prv.txt) files"
