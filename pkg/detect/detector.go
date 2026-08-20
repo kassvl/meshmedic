@@ -643,6 +643,35 @@ func (d *Detector) watchAnomaly(ctx context.Context, t Target, w catalog.Query, 
 // learned baseline times its multiplier once the baseline is trusted,
 // otherwise the static threshold. A scenario with no baselineMultiplier, or
 // one whose baseline has not warmed up, always uses the static threshold.
+// EffectiveThreshold reports the threshold currently in force for an entry on
+// a target, and whether it came from the learned baseline rather than from the
+// static number.
+//
+// It is exported because a harness that reports "this entry stayed quiet"
+// without saying what it stayed quiet against has reported half a fact: the
+// same silence means a well-calibrated entry or one whose learned normal
+// drifted so high it can no longer fire. Unlike effectiveThreshold below, this
+// announces nothing, so asking the question does not write to the log.
+func (d *Detector) EffectiveThreshold(s catalog.Scenario, t Target) (threshold float64, relative bool) {
+	if d.Baseline == nil || s.Signal.BaselineMultiplier <= 0 {
+		return s.Signal.Threshold, false
+	}
+	minSamples := s.Signal.BaselineMinSamples
+	if minSamples <= 0 {
+		minSamples = 20
+	}
+	if base, ready := d.Baseline.Baseline(targetKey(s.ID, t.Params), minSamples); ready {
+		return base * s.Signal.BaselineMultiplier, true
+	}
+	return s.Signal.Threshold, false
+}
+
+// Hold is the entry's `for` duration: how long its signal must stay in breach
+// before an incident is reported. Exported for the same reason as the
+// threshold, and because the gap between it and the longest breach a healthy
+// cluster produces is the margin an entry actually runs on.
+func Hold(s catalog.Scenario) time.Duration { return forDuration(s) }
+
 func (d *Detector) effectiveThreshold(s catalog.Scenario, t Target) float64 {
 	if d.Baseline == nil || s.Signal.BaselineMultiplier <= 0 {
 		return s.Signal.Threshold
