@@ -62,7 +62,25 @@ the deferred cleanup. And proving that something fired without proving it named
 the culprit proves the entry detected something and explained nothing, which is
 why `expect.names` is required.
 
-**5. Run it.**
+**5. Check the testbed first, then run it.**
+
+```console
+$ meshmedic-prove doctor --kube-context <ctx>
+```
+
+`doctor` runs the seven checks that have to hold before a result means
+anything, and injects nothing. It is worth its own command because the most
+expensive failure in this harness is not a wrong answer, it is an hour of
+right-looking answers about a cluster nobody was watching: a dead port-forward
+once cost seventeen minutes of a run that blamed an entry for the observer's
+blindness.
+
+The checks are: Prometheus answers; it has mesh telemetry; the cluster is
+reachable; the context you read through is the one the specs inject into; no
+leftover fault objects; no entry already in breach; workloads ready. The last
+two are the general and the specific version of "is this testbed clean", and
+the general one catches leftovers nobody wrote a check for, including faults
+that live in an environment variable rather than an object.
 
 ```console
 $ meshmedic-prove --entry your-entry --kube-context <ctx> --yes-inject-faults
@@ -72,6 +90,19 @@ $ meshmedic-prove --entry your-entry --kube-context <ctx> --yes-inject-faults
 separate binary and a separate download for that reason, it prints every
 command before running any of them, and it refuses to start without the
 acknowledgement flag. Point it at a testbed.
+
+For a whole suite, two flags matter. `--wait-observer` makes the runner wait
+for Prometheus to come back before each proof rather than injecting into a
+cluster nobody is watching; a long run outlives the forward that was up when it
+started. `--retry-blind` re-runs a proof that went blind, and only one that went
+blind: a proof where the observer was healthy and the entry did not fire is a
+finding, and a harness that retries findings until they disappear is a machine
+for producing green. `--results out.json` writes the run in a form something
+other than a person can read.
+
+A forward that stays up for the length of a suite is its own small problem;
+[`hack/port-forward.sh`](hack/port-forward.sh) is the recipe, including the
+part that is easy to get wrong.
 
 If your entry genuinely cannot be proven where you are, say so in
 [`proof/UNPROVABLE.yaml`](proof/UNPROVABLE.yaml) with the measurement behind

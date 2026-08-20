@@ -24,6 +24,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -45,7 +47,20 @@ import (
 )
 
 func main() {
-	fs := flag.NewFlagSet("meshmedic-prove", flag.ExitOnError)
+	// `doctor` is the only subcommand, and everything else keeps the flag-only
+	// form v1.0.0 shipped with, so a documented command line does not stop
+	// working. Anything starting with a dash is the legacy form.
+	args := os.Args[1:]
+	doctorMode := len(args) > 0 && args[0] == "doctor"
+	if doctorMode {
+		args = args[1:]
+	}
+
+	name := "meshmedic-prove"
+	if doctorMode {
+		name = "meshmedic-prove doctor"
+	}
+	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	catalogDir := fs.String("catalog", "catalog", "catalog directory")
 	proofDir := fs.String("proofs", "proof", "proof spec directory")
 	promURL := fs.String("prometheus", "http://127.0.0.1:9090", "Prometheus base URL")
@@ -55,7 +70,16 @@ func main() {
 	yes := fs.Bool("yes-inject-faults", false, "acknowledge that this mutates the cluster it is pointed at")
 	kubeContext := fs.String("kube-context", os.Getenv("MESHMEDIC_KUBE_CONTEXT"), "kubeconfig context to read through; must be the cluster the inject commands target")
 	quiesce := fs.Duration("quiesce", 150*time.Second, "settle time between proofs, so one proof's fault does not leak into the next")
-	fs.Parse(os.Args[1:])
+	// A suite outlives the things that were up when it started. Waiting for
+	// the observer to come back is not leniency: nothing is injected while it
+	// is gone, so the alternative to waiting is not a stricter measurement,
+	// it is a verdict about an entry nobody watched.
+	waitObserver := fs.Duration("wait-observer", 2*time.Minute, "before each proof, wait up to this long for Prometheus to answer instead of failing the entry")
+	// Blind runs only. See proof.Retryable: retrying a real failure is how a
+	// harness launders a bug into a pass.
+	retries := fs.Int("retry-blind", 1, "re-run a proof this many times when the harness went blind; failures are never retried")
+	resultsPath := fs.String("results", "", "write the run's results as JSON to this path")
+	fs.Parse(args)
 
 	scenarios, err := catalog.LoadDir(*catalogDir)
 	if err != nil {
@@ -86,6 +110,12 @@ func main() {
 		}
 	}
 
+	// Coverage is a property of the repository, not of the subset this
+	// invocation chose to run. Measuring it after the --entry filter made a
+	// single-entry run announce that seventeen entries had no proof, when
+	// sixteen of them did.
+	allSpecs := len(specs)
+
 	if *only != "" {
 		filtered := specs[:0]
 		for _, sp := range specs {
@@ -106,7 +136,22 @@ func main() {
 	// and printed. A suite that begins without this can spend an hour
 	// producing failures that say nothing: seventeen minutes of that happened
 	// here when a port-forward died unnoticed.
-	if !preflight(*promURL, *kubeContext, scenarios, specs, logger) {
+	ok := preflight(*promURL, *kubeContext, scenarios, specs, logger)
+
+	// `doctor` is this and nothing else: the same checks, no injection, an
+	// exit code a script can branch on. It exists because these checks were
+	// run by hand five times in one session before a suite was trusted to
+	// start, and because the answer to "is this testbed fit to measure
+	// anything" is worth having without mutating the testbed to find out.
+	if doctorMode {
+		if ok {
+			logger.Printf("this testbed is fit to prove against; nothing was injected")
+			return
+		}
+		logger.Printf("this testbed is not fit to prove against; nothing was injected")
+		os.Exit(1)
+	}
+	if !ok {
 		os.Exit(1)
 	}
 
@@ -136,7 +181,8 @@ func main() {
 	} else {
 		logger.Printf("reading through kubectl's current context; pass --kube-context if the inject commands target a different cluster")
 	}
-	runner := proof.NewRunner(scenarios, prom.NewClient(*promURL), reader)
+	observer := prom.NewClient(*promURL)
+	runner := proof.NewRunner(scenarios, observer, reader)
 
 	results := make([]proof.Result, 0, len(specs))
 	for i, sp := range specs {
@@ -159,12 +205,41 @@ func main() {
 		runner.Log = func(format string, args ...any) {
 			logger.Printf("  "+sp.Entry+": "+format, args...)
 		}
+
+		// Ask whether anyone is watching before putting a fault in a cluster.
+		// Injecting into an unobserved cluster produces a fault, a verdict,
+		// and no information.
+		if _, up := proof.WaitForObserver(ctx, observer, *waitObserver, 5*time.Second, nil, nil,
+			func(f string, a ...any) { logger.Printf("  "+sp.Entry+": "+f, a...) }); !up {
+			logger.Printf("[%d/%d] %s: SKIPPED, the observer never came back within %s; nothing was injected",
+				i+1, len(specs), sp.Entry, *waitObserver)
+			results = append(results, proof.Result{
+				Entry:       sp.Entry,
+				Blind:       true,
+				BlindReason: "Prometheus did not answer within " + waitObserver.String(),
+				Failures:    []string{"skipped: nothing was injected, so this says nothing about the entry"},
+			})
+			continue
+		}
+
 		res := runner.Run(ctx, sp)
+		for attempt := 1; attempt <= *retries && proof.Retryable(res) && ctx.Err() == nil; attempt++ {
+			logger.Printf("  %s: the harness went blind (%s); re-running, attempt %d of %d",
+				sp.Entry, res.BlindReason, attempt, *retries)
+			if _, up := proof.WaitForObserver(ctx, observer, *waitObserver, 5*time.Second, nil, nil,
+				func(f string, a ...any) { logger.Printf("  "+sp.Entry+": "+f, a...) }); !up {
+				break
+			}
+			res = runner.Run(ctx, sp)
+		}
 		results = append(results, res)
 
 		verdict := "PASS"
 		if !res.Passed {
 			verdict = "FAIL"
+		}
+		if res.Blind {
+			verdict = "BLIND"
 		}
 		logger.Printf("[%d/%d] %s: %s (%s)", i+1, len(specs), sp.Entry, verdict, res.Duration.Round(time.Second))
 		for _, f := range res.Failures {
@@ -179,7 +254,33 @@ func main() {
 		}
 	}
 
-	os.Exit(summarize(results, scenarios, specs))
+	// A run whose results live only in a terminal has to be re-read by a human
+	// to be used again. Eleven scenarios were scored by hand into a scratch
+	// file on 2026-08-19 for exactly this reason.
+	if *resultsPath != "" {
+		writeResults(*resultsPath, results, logger)
+	}
+
+	os.Exit(summarize(results, len(scenarios), allSpecs))
+}
+
+// writeResults records the run in a form something other than a person can
+// read. It is deliberately the Result struct as it stands rather than a
+// prettier schema: a report that drifts from what the harness actually
+// measured is worse than no report.
+func writeResults(path string, results []proof.Result, logger *log.Logger) {
+	body, err := json.MarshalIndent(struct {
+		Results []proof.Result `json:"results"`
+	}{results}, "", "  ")
+	if err != nil {
+		logger.Printf("cannot encode results: %v", err)
+		return
+	}
+	if err := os.WriteFile(path, append(body, '\n'), 0o644); err != nil {
+		logger.Printf("cannot write %s: %v", path, err)
+		return
+	}
+	logger.Printf("results written to %s", path)
 }
 
 // preflight proves the run can produce a meaningful result before it starts.
@@ -269,9 +370,14 @@ func preflight(promURL, kubeContext string, scenarios []catalog.Scenario, specs 
 			// fault-shape short; asking the catalog whether anything is
 			// currently in breach catches a leftover of any shape, including
 			// one nobody has written a proof for yet.
-			breaching := currentlyBreaching(ctx, scenarios, specs, client)
+			breaching, unreadable := currentlyBreaching(ctx, scenarios, specs, client)
 			if len(breaching) > 0 {
 				return "already in breach before injection: " + strings.Join(breaching, ", "), false
+			}
+			// Silence from a server that is not answering is not quiet, and
+			// saying so here would clear a testbed nobody managed to look at.
+			if unreadable > 0 {
+				return fmt.Sprintf("%d entries could not be read, so nothing can be said about whether the testbed is quiet", unreadable), false
 			}
 			return "catalog quiet on this testbed", true
 		}},
@@ -319,9 +425,20 @@ func preflight(promURL, kubeContext string, scenarios []catalog.Scenario, specs 
 // proofs use and returns the ids already past their threshold. It is a single
 // pass, so a hold duration is irrelevant: any breach at all before a fault is
 // injected means the run would be measuring someone else's incident.
-func currentlyBreaching(ctx context.Context, scenarios []catalog.Scenario, specs []proof.Spec, client *prom.Client) []string {
+// currentlyBreaching reports which entries are already in breach, and how many
+// could not be read at all.
+//
+// The second return value is the whole reason this signature is not just a
+// slice. An empty query result and an unreachable server are not the same
+// fact: for a failure counter, no series is the healthy reading, while a
+// refused connection means nobody looked. Folding them together lets the
+// preflight announce a quiet testbed on the strength of a dead Prometheus,
+// which is precisely the blind-versus-clear confusion the detector's
+// four-state model exists to prevent. A harness allowed to make the mistake
+// it is checking for is worse than no harness.
+func currentlyBreaching(ctx context.Context, scenarios []catalog.Scenario, specs []proof.Spec, client *prom.Client) (breaching []string, unreadable int) {
 	seen := map[string]bool{}
-	var out []string
+	asked := map[string]bool{}
 	for _, sp := range specs {
 		for _, s := range scenarios {
 			if seen[s.ID] {
@@ -332,17 +449,24 @@ func currentlyBreaching(ctx context.Context, scenarios []catalog.Scenario, specs
 				continue // not applicable to this target
 			}
 			v, err := client.Query(ctx, query)
-			if err != nil {
+			switch {
+			case errors.Is(err, prom.ErrNoData):
 				continue // no series is the healthy reading for a failure counter
+			case err != nil:
+				if !asked[s.ID] {
+					asked[s.ID] = true
+					unreadable++
+				}
+				continue
 			}
 			if breachedPreflight(v, s.Signal.Comparison, s.Signal.Threshold) {
 				seen[s.ID] = true
-				out = append(out, fmt.Sprintf("%s (%.4g %s %.4g)", s.ID, v, s.Signal.Comparison, s.Signal.Threshold))
+				breaching = append(breaching, fmt.Sprintf("%s (%.4g %s %.4g)", s.ID, v, s.Signal.Comparison, s.Signal.Threshold))
 			}
 		}
 	}
-	sort.Strings(out)
-	return out
+	sort.Strings(breaching)
+	return breaching, unreadable
 }
 
 func renderForPreflight(name, promql string, params map[string]string) (string, error) {
@@ -478,14 +602,23 @@ func firstSentence(s string) string {
 	return s
 }
 
-func summarize(results []proof.Result, scenarios []catalog.Scenario, specs []proof.Spec) int {
+func summarize(results []proof.Result, entries, proofs int) int {
 	fmt.Println()
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	fmt.Fprintln(w, "ENTRY\tRESULT\tFIRED AFTER\tNAMED\tRESOLVED\tDETAIL")
-	failed := 0
+	failed, blind := 0, 0
 	for _, r := range results {
+		// Three outcomes, not two. A blind run and a failing run are both
+		// "not a proof", but only one of them is about the entry, and
+		// printing FAIL next to an entry nobody could observe is the exact
+		// mistake Result.Blind was added to prevent. Neither counts as
+		// proven, so both still end the command non-zero.
 		verdict := "pass"
-		if !r.Passed {
+		switch {
+		case r.Blind:
+			verdict = "BLIND"
+			blind++
+		case !r.Passed:
 			verdict = "FAIL"
 			failed++
 		}
@@ -510,11 +643,16 @@ func summarize(results []proof.Result, scenarios []catalog.Scenario, specs []pro
 	}
 	w.Flush()
 
-	fmt.Printf("\n%d proofs run, %d passed, %d failed\n", len(results), len(results)-failed, failed)
-	if unproven := len(scenarios) - len(specs); unproven > 0 {
+	fmt.Printf("\n%d proofs run, %d passed, %d failed, %d blind\n",
+		len(results), len(results)-failed-blind, failed, blind)
+	if blind > 0 {
+		fmt.Printf("%d run(s) said nothing about their entry: the harness could not see the cluster.\n"+
+			"  Fix the observer and re-run those; do not read them as failures.\n", blind)
+	}
+	if unproven := entries - proofs; unproven > 0 {
 		fmt.Printf("%d catalog entries still have no proof at all\n", unproven)
 	}
-	if failed > 0 {
+	if failed > 0 || blind > 0 {
 		return 1
 	}
 	return 0

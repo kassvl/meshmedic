@@ -79,6 +79,9 @@ archives:
       - catalog/*.yaml
       - catalog.lock
       - docs/calibration.md
+      # A suite needs a forward that outlives it, and the recipe has a
+      # non-obvious part. CONTRIBUTING.md points here.
+      - hack/port-forward.sh
       - LICENSE
 
 checksum:

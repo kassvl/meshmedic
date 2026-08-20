@@ -42,3 +42,36 @@ jobs:
         run: |
           docker run --rm meshmedic:ci version
           docker run --rm meshmedic:ci validate | tail -1
+
+  # The other half of the same lesson. The image build now runs on every pull
+  # request because it broke at a tag; the archives broke at that tag too, and
+  # for a subtler reason: a `catalog/**/*` glob matched nothing, so archives
+  # shipped without the catalog and the downloaded prover could not read a
+  # single proof. GoReleaser called that configuration valid. A snapshot build
+  # is what calls it wrong, so it runs here rather than at the next tag.
+  archives:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean --skip=docker,publish
+      - name: every archive carries what its binary needs to run
+        run: |
+          set -euo pipefail
+          det=$(ls dist/meshmedic_*_linux_amd64.tar.gz)
+          prv=$(ls dist/meshmedic-prove_*_linux_amd64.tar.gz)
+          # A detector without its catalog and lock detects nothing; a prover
+          # without its specs proves nothing. Assert the contents rather than
+          # the exit code, because an empty archive builds perfectly well.
+          tar tzf "$det" | grep -q 'catalog.lock'
+          test "$(tar tzf "$det" | grep -c '^catalog/.*\.yaml$')" -ge 15
+          test "$(tar tzf "$prv" | grep -c '^proof/.*\.yaml$')" -ge 15
+          tar tzf "$prv" | grep -q 'hack/port-forward.sh'
+          echo "detector: $(tar tzf "$det" | wc -l) files, prover: $(tar tzf "$prv" | wc -l) files"
