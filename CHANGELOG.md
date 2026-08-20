@@ -5,6 +5,35 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **The cycle summary no longer says `firing` for three different things.**
+  In Prometheus's vocabulary an alert fires once it has held for its `for`
+  duration; this counter turned true the moment the comparison did, which is
+  earlier and sometimes much earlier. Two runs were misread because of it: one
+  showed `2 firing` with a single report, because the second entry was
+  suppressed as a cascade symptom, and one showed `1 firing` with no report at
+  all, because the entry had not yet held. The tool was right both times and
+  the summary described it wrongly. The line now reads `N in breach` and, when
+  N is not zero, breaks it down: reported, suppressed, awaiting hold,
+  rate-limited, handler retrying. Every breach lands in exactly one bucket and
+  a test asserts the arithmetic, because a number that does not add up is a
+  liability rather than a fact. The two silent exits from delivery, a guardrail
+  that stopped a further proposal and a handler that errored, are counted
+  apart: a guardrail that hides what it blocked is its own fail-open.
+
+- **`connection-pool-overflow` now reports the pool limit that is doing the
+  shedding.** The entry read the destination Deployment, which is the right
+  evidence for the raise-versus-scale call, and never opened the
+  DestinationRule that held the fault, so a dossier that correctly diagnosed
+  pool exhaustion still ended with the operator looking up the number to
+  change. Measured on 2026-08-19 with `maxConnections: 1` as the injected
+  fault and no mention of it in the report. Every DestinationRule in the
+  namespace is listed rather than one guessed by name, because a rule that
+  binds a host is not obliged to be named after it. An audit of the other
+  eleven entries carrying object evidence found no second case: each already
+  reads the object that holds its fault.
+
 ### Added
 
 - **`meshmedic-prove doctor`.** The seven preflight checks as their own

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "digest": "sha256:6b688073ccc5bcd28f9a27ff964abf2bc604fc851ea24e40654781dbc55191e1",
+  "digest": "sha256:1fcaa2b216c11ad3809763417dc63dbfa321d770040a7fde196b734da1cb9c7e",
   "entries": {
     "authz-deny-flood": {
       "sha256": "sha256:ad72c9e7cb7d96883fb8a3ea3daba45b3b5a9c112d722c925a433437911683e0",
@@ -19,11 +19,11 @@
       }
     },
     "connection-pool-overflow": {
-      "sha256": "sha256:aa2fc8369e881e34170709d391ea58f6602ae40f85612000678bcff4aed41123",
-      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "sha256": "sha256:f6dd11a9d6f246528221289ee7e47abaff35c6b5d6a5bbd12eb5a904c80abec2",
+      "validated_at": "2026-08-20T04:11:06.33338Z",
       "validated_against": {
         "istio": "1.24.1",
-        "testbed": "0b41872"
+        "testbed": "0a7f144"
       }
     },
     "error-surge-outlier-ejection": {
@@ -115,11 +115,11 @@
       }
     },
     "upstream-dependency-latency": {
-      "sha256": "sha256:112340f42d5db8b0ad5e1df608880990a6d2c7daf1107d90d3874f7fff16a4d3",
-      "validated_at": "2026-08-19T02:44:03.908701Z",
+      "sha256": "sha256:336efeab79ea536afcd415305bffcabab17e3ae4855edc72be08eb02090114f9",
+      "validated_at": "2026-08-20T04:11:06.33338Z",
       "validated_against": {
         "istio": "1.24.1",
-        "testbed": "0b41872"
+        "testbed": "0a7f144"
       }
     },
     "upstream-host-ejection-flood": {

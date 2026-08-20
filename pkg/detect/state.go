@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -57,10 +58,41 @@ type Evaluation struct {
 // to OnCycle so the CLI can print the coverage line and a caller can assert on
 // it without scraping logs.
 type Cycle struct {
-	Started     time.Time
-	Observed    int // targets whose coverage probe returned series
-	Unobserved  int // targets whose coverage probe did not
-	Firing      int
+	Started    time.Time
+	Observed   int // targets whose coverage probe returned series
+	Unobserved int // targets whose coverage probe did not
+
+	// InBreach counts evaluations whose signal is over its threshold on this
+	// tick. It was called Firing, and the name was the bug: in Prometheus's
+	// vocabulary an alert fires once it has held for its `for` duration,
+	// while this counts the moment the comparison turns true, which is
+	// earlier and sometimes much earlier. Two runs were misread because of
+	// it, one showing two firing with a single report and one showing one
+	// firing with no report at all. Both were the tool behaving correctly and
+	// the summary describing it wrongly.
+	//
+	// A breach is always in exactly one of the five buckets below, and the
+	// distinctions are not pedantic: they are five different reasons an
+	// operator might be looking at silence.
+	InBreach int
+	// Reported: the hold was met, nothing suppressed it, and the handler took
+	// the incident. This is the only one that produced a document.
+	Reported int
+	// Suppressed: held back as a cascade symptom of another incident that is
+	// also breaching. A real breach, deliberately not a second report.
+	Suppressed int
+	// Waiting: in breach, but not yet for its `for` duration. Reporting
+	// nothing is correct here, and it is indistinguishable from a healthy
+	// cluster unless the number is shown.
+	Waiting int
+	// RateLimited: the hold was met and maxAppliesPerHour stopped a further
+	// proposal. The signal is still breaching and the operator still needs to
+	// know; a guardrail that hides what it blocked is its own fail-open.
+	RateLimited int
+	// Retrying: the handler errored, so the episode was kept rather than
+	// marked delivered. It will be due again on the next tick.
+	Retrying int
+
 	Clear       int
 	Blind       int
 	Unlocked    int
@@ -74,8 +106,33 @@ type Cycle struct {
 // purpose, including when everything is fine: a coverage number that only
 // appears when it is bad is a number nobody learns to read.
 func (c Cycle) Line() string {
-	return fmt.Sprintf("%d targets observed, %d unobserved, %d scenarios blind (%d firing, %d clear, %d unlocked)",
-		c.Observed, c.Unobserved, c.Blind, c.Firing, c.Clear, c.Unlocked)
+	breach := fmt.Sprintf("%d in breach", c.InBreach)
+	// Break the number down only when there is something to break down, and
+	// name only the non-zero parts. A line that always carries five numbers
+	// is a line nobody reads, and the whole point of this change is that the
+	// single number was being read wrongly.
+	if c.InBreach > 0 {
+		var parts []string
+		for _, p := range []struct {
+			n     int
+			label string
+		}{
+			{c.Reported, "reported"},
+			{c.Suppressed, "suppressed"},
+			{c.Waiting, "awaiting hold"},
+			{c.RateLimited, "rate-limited"},
+			{c.Retrying, "handler retrying"},
+		} {
+			if p.n > 0 {
+				parts = append(parts, fmt.Sprintf("%d %s", p.n, p.label))
+			}
+		}
+		if len(parts) > 0 {
+			breach += " (" + strings.Join(parts, ", ") + ")"
+		}
+	}
+	return fmt.Sprintf("%d targets observed, %d unobserved, %d scenarios blind (%s, %d clear, %d unlocked)",
+		c.Observed, c.Unobserved, c.Blind, breach, c.Clear, c.Unlocked)
 }
 
 // Healthy reports whether the cycle proved the tool was looking at every

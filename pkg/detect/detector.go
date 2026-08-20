@@ -374,6 +374,16 @@ func (d *Detector) Tick(ctx context.Context, now time.Time) Cycle {
 			cycle.record(ev)
 			if isDue {
 				due = append(due, dueIncident{key, s, ev.Value})
+			} else if st := d.states[key]; st != nil {
+				// Not due, but the state says whether that is because the
+				// hold has not elapsed or because this episode was already
+				// reported on an earlier tick. Both look like silence.
+				switch st.state {
+				case pending:
+					cycle.Waiting++
+				case firing:
+					cycle.Reported++
+				}
 			}
 			if d.states[key].state != inactive {
 				inBreach[s.ID] = true
@@ -403,9 +413,17 @@ func (d *Detector) Tick(ctx context.Context, now time.Time) Cycle {
 		for _, du := range due {
 			if by, ok := suppressedBy[du.s.ID]; ok {
 				d.Log("%s: suppressed by %s: cascade symptom, not a second incident", du.key, by)
+				cycle.Suppressed++
 				continue
 			}
-			d.deliver(ctx, du.key, du.s, t, du.value)
+			switch d.deliver(ctx, du.key, du.s, t, du.value) {
+			case deliveredIncident:
+				cycle.Reported++
+			case deliveryRateLimited:
+				cycle.RateLimited++
+			case deliveryRetrying:
+				cycle.Retrying++
+			}
 		}
 	}
 	if d.OnCycle != nil {
@@ -419,7 +437,7 @@ func (c *Cycle) record(ev Evaluation) {
 	c.Evaluations = append(c.Evaluations, ev)
 	switch ev.Outcome {
 	case OutcomeFiring:
-		c.Firing++
+		c.InBreach++
 	case OutcomeClear:
 		c.Clear++
 	case OutcomeBlind:
@@ -677,7 +695,18 @@ func targetKey(scenarioID string, params map[string]string) string {
 	return b.String()
 }
 
-func (d *Detector) deliver(ctx context.Context, key string, s catalog.Scenario, t Target, value float64) {
+// delivery is what became of a due incident. Three of deliver's exits are
+// silent from the outside and only one of them produced a document, so the
+// cycle summary has to be told which.
+type delivery int
+
+const (
+	deliveredIncident   delivery = iota // the handler took it
+	deliveryRateLimited                 // maxAppliesPerHour stopped a further proposal
+	deliveryRetrying                    // the handler errored; the episode is kept
+)
+
+func (d *Detector) deliver(ctx context.Context, key string, s catalog.Scenario, t Target, value float64) delivery {
 	st := d.states[key]
 
 	// The catalog's maxAppliesPerHour guardrail, enforced. Every entry
@@ -696,7 +725,7 @@ func (d *Detector) deliver(ctx context.Context, key string, s catalog.Scenario, 
 			d.Log("%s: guardrail hit, %d of %d applies used in the last hour; the signal is still breaching at %.4g but no further change will be proposed until the window clears",
 				key, n, limit, value)
 			st.state = firing
-			return
+			return deliveryRateLimited
 		}
 	}
 
@@ -716,12 +745,13 @@ func (d *Detector) deliver(ctx context.Context, key string, s catalog.Scenario, 
 	})
 	if err != nil {
 		d.Log("%s: handler failed, keeping the episode for retry: %v", key, err)
-		return
+		return deliveryRetrying
 	}
 	// Count the apply only once the handler has taken it. A pull request that
 	// never opened must not consume the entry's hourly budget.
 	st.applies = append(st.applies, d.now())
 	st.state = firing
+	return deliveredIncident
 }
 
 // now is the detector's clock, injectable so the guardrail's rolling hour is
