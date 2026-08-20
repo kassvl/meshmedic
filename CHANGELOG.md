@@ -36,6 +36,35 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A mutation suite over the guards themselves.** Every guard here claims to
+  catch something and nothing checked the claim, which stopped being an
+  abstract worry on 2026-08-20: four separate checks turned out to be checking
+  nothing. A preflight called a testbed quiet on the strength of a dead
+  Prometheus. A summary printed FAIL for a run nobody observed. A coverage
+  count measured a command-line filter. An archive assertion in CI failed on
+  its own pipe before it read an archive. All four were green.
+
+  So the shipped catalog and specs are now broken on purpose, one property at
+  a time, and the guard that owns that property has to reject the result. A
+  mutation that survives is a guard that is decorative. These are the ones
+  catchable without a cluster: validation, the deadline-versus-hold rule, the
+  cross-directory entry check, and the lock.
+
+  Two of them pin down exactly where the lock's line sits, which had never
+  been written down as a test. Comments and blank lines are free, verified by
+  reformatting every catalog file on disk and reloading it, because a lock
+  that forces re-approval for reindentation teaches people to re-approve
+  without reading. Rewriting the Diagnosis paragraph is not free, because that
+  paragraph is not prose about the entry, it is what the incident report tells
+  an operator mid-incident.
+
+  Writing this suite produced two false alarms of its own, both left in the
+  record. The first reached for `Stale`, which answers a different question,
+  and reported sixteen surviving mutations that were artefacts of the wrong
+  call. The second expected the Diagnosis text to be free and was simply
+  wrong about what that field is. A red check is no more proof that its
+  subject is broken than a green one is proof that it works, which is the
+  entire thesis of the suite.
 - **A proof whose deadline sits inside its entry's hold duration is now
   refused before anything is injected.** `Spec`'s documentation has always
   said `firesWithin` must exceed the hold or the proof is unwinnable, and

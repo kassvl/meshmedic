@@ -109,15 +109,9 @@ func main() {
 
 	// A proof for an entry that is not in the catalog proves nothing, and a
 	// typo in an id would otherwise silently skip the entry it meant to test.
-	known := map[string]bool{}
-	for _, s := range scenarios {
-		known[s.ID] = true
-	}
-	for _, sp := range specs {
-		if !known[sp.Entry] {
-			fmt.Fprintf(os.Stderr, "proof references unknown entry %q\n", sp.Entry)
-			os.Exit(1)
-		}
+	for _, id := range proof.CheckEntriesExist(scenarios, specs) {
+		fmt.Fprintf(os.Stderr, "proof references unknown entry %q\n", id)
+		os.Exit(1)
 	}
 
 	// A deadline inside the entry's hold duration cannot be met by any
