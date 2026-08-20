@@ -120,6 +120,21 @@ func main() {
 		}
 	}
 
+	// A deadline inside the entry's hold duration cannot be met by any
+	// correct entry, and the run would spend its whole budget proving that.
+	// Worse, it would report "never fired", which reads as a broken entry and
+	// is in fact arithmetic. Refuse before injecting anything.
+	var tight []proof.Winnability
+	for _, w := range proof.CheckWinnable(scenarios, specs) {
+		switch {
+		case w.Unwinnable():
+			fmt.Fprintln(os.Stderr, "unwinnable proof:", w)
+			os.Exit(1)
+		case w.Thin():
+			tight = append(tight, w)
+		}
+	}
+
 	// Coverage is a property of the repository, not of the subset this
 	// invocation chose to run. Measuring it after the --entry filter made a
 	// single-entry run announce that seventeen entries had no proof, when
@@ -142,6 +157,12 @@ func main() {
 	}
 
 	logger := log.New(os.Stderr, "prove: ", log.LstdFlags)
+
+	// Said, not fatal: a thin proof can still be won, and today's run is not
+	// the place to argue about tomorrow's flake.
+	for _, w := range tight {
+		logger.Printf("thin deadline: %s", w)
+	}
 
 	// Everything that has to be true before a run is worth starting, checked
 	// and printed. A suite that begins without this can spend an hour

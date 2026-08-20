@@ -36,6 +36,25 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **A proof whose deadline sits inside its entry's hold duration is now
+  refused before anything is injected.** `Spec`'s documentation has always
+  said `firesWithin` must exceed the hold or the proof is unwinnable, and
+  nothing enforced it: `Validate` checks the deadline is positive and stops,
+  because a spec on its own cannot see the catalog. So the rule lived in a
+  comment and holding to it was a matter of remembering.
+
+  It nearly cost a run the same day. An entry's hold went from 90 seconds to
+  five minutes and its proof's five-minute deadline had to be raised by hand
+  in the same edit. Forgetting would have produced "never fired within 5m",
+  which reads as a broken entry and is in fact a deadline expiring at the
+  exact moment the entry became eligible to report: a measurement about
+  arithmetic wearing the costume of a measurement about the mesh.
+
+  Nothing in the repository violates this today, and a test over the shipped
+  catalog and proof directories is what keeps that true. A proof that can be
+  won but leaves under a minute of slack is said rather than refused, since
+  the signal still has to climb into breach and the detector still needs a
+  tick to deliver, both inside that.
 - **`meshmedic-prove silence`**, the axis the proof suite could not reach.
   Every spec in `proof/` asserts that an entry fires when its fault is present.
   None of them assert that it stays quiet when it is not, and a detector that
