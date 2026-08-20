@@ -42,3 +42,43 @@ jobs:
         run: |
           docker run --rm meshmedic:ci version
           docker run --rm meshmedic:ci validate | tail -1
+
+  # The other half of the same lesson. The image build now runs on every pull
+  # request because it broke at a tag; the archives broke at that tag too, and
+  # for a subtler reason: a `catalog/**/*` glob matched nothing, so archives
+  # shipped without the catalog and the downloaded prover could not read a
+  # single proof. GoReleaser called that configuration valid. A snapshot build
+  # is what calls it wrong, so it runs here rather than at the next tag.
+  archives:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --snapshot --clean --skip=docker,publish
+      - name: every archive carries what its binary needs to run
+        run: |
+          set -euo pipefail
+          # List each archive once into a file rather than piping tar into
+          # grep. `grep -q` exits at the first match and closes the pipe, tar
+          # takes a write error on the rest, and under pipefail that fails the
+          # step for a reason that has nothing to do with the archive. That is
+          # how this check failed the first time it ran.
+          tar tzf dist/meshmedic_*_linux_amd64.tar.gz > /tmp/det.txt
+          tar tzf dist/meshmedic-prove_*_linux_amd64.tar.gz > /tmp/prv.txt
+
+          # A detector without its catalog and lock detects nothing; a prover
+          # without its specs proves nothing. Assert the contents rather than
+          # the exit code, because an empty archive builds perfectly well.
+          grep -q '^catalog\.lock$' /tmp/det.txt
+          test "$(grep -c '^catalog/.*\.yaml$' /tmp/det.txt)" -ge 15
+          test "$(grep -c '^proof/.*\.yaml$' /tmp/prv.txt)" -ge 15
+          grep -q '^hack/port-forward\.sh$' /tmp/prv.txt
+
+          echo "detector: $(wc -l < /tmp/det.txt) files, prover: $(wc -l < /tmp/prv.txt) files"

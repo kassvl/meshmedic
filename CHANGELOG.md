@@ -3,6 +3,45 @@
 All notable changes to MeshMedic. Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`meshmedic-prove doctor`.** The seven preflight checks as their own
+  command, injecting nothing, with an exit code a script can branch on. They
+  existed already but only as the opening act of a run that then mutates the
+  cluster, so the question "is this testbed fit to measure anything" could not
+  be asked without answering it destructively. It was asked by hand five times
+  in one session before a suite was trusted to start.
+- **`--wait-observer` on the prover.** Before each proof, wait for Prometheus
+  to answer rather than injecting into a cluster nobody is watching. A suite
+  outlives the port-forward that was up when it started, and the previous
+  behaviour turned one transient gap into a row of verdicts about entries that
+  were never observed. Nothing is injected while the wait is on, so the
+  alternative to waiting was never a stricter measurement.
+- **`--retry-blind` on the prover**, and `proof.Retryable` behind it. Only a
+  blind run is retried. A run where the observer was healthy and the entry did
+  not fire is a finding, and a harness that retries findings until they
+  disappear is a machine for producing green. This is the same line the
+  detector draws between `blind` and `clear`.
+- **`--results` on the prover**, writing the run as JSON. Eleven scenarios were
+  scored by hand into a scratch file on 2026-08-19 for want of this.
+- **`hack/port-forward.sh`**, a forward that survives a long suite. It waits for
+  the listening socket to drain before rebinding, because restarting
+  immediately loses the race against its own predecessor and turns a
+  one-second gap into thirty, which is long enough for a detector to report
+  blind and a harness to blame an entry.
+
+### Fixed
+
+- **The prover's preflight could call a testbed quiet on the strength of a dead
+  Prometheus.** Its breach check treated any query error as "no series", which
+  is the healthy reading for a failure counter but is not what a refused
+  connection means. Empty results and unreachable servers are now distinct, and
+  entries that could not be read fail the check by count. This is precisely the
+  blind-versus-clear confusion the detector's four-state model exists to
+  prevent, committed by the harness that checks for it.
+
 ## [1.0.0] - 2026-08-19
 
 ### Added
