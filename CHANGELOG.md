@@ -36,6 +36,14 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`--entry` is repeatable.** Proving two entries used to mean invoking the
+  command twice, which skips the quiesce between them, because the quiesce
+  lives between specs inside one run. That is not hypothetical: the second of
+  two such runs was refused by its own preflight, correctly, because the entry
+  it was about to test was still breaching from the first run's reset. One
+  invocation with two `--entry` flags settles between them. Every id that
+  matched nothing is named, not just the first, because a typo in one of five
+  entries should not read as a run of four.
 - **`meshmedic-prove doctor`.** The seven preflight checks as their own
   command, injecting nothing, with an exit code a script can branch on. They
   existed already but only as the opening act of a run that then mutates the

@@ -64,7 +64,8 @@ func main() {
 	catalogDir := fs.String("catalog", "catalog", "catalog directory")
 	proofDir := fs.String("proofs", "proof", "proof spec directory")
 	promURL := fs.String("prometheus", "http://127.0.0.1:9090", "Prometheus base URL")
-	only := fs.String("entry", "", "prove one entry instead of all of them")
+	var only multiFlag
+	fs.Var(&only, "entry", "prove this entry instead of all of them (repeatable)")
 	list := fs.Bool("list", false, "list the entries that have a proof, and those that do not")
 	outDir := fs.String("out", "", "write each incident report under this directory")
 	yes := fs.Bool("yes-inject-faults", false, "acknowledge that this mutates the cluster it is pointed at")
@@ -116,18 +117,19 @@ func main() {
 	// sixteen of them did.
 	allSpecs := len(specs)
 
-	if *only != "" {
-		filtered := specs[:0]
-		for _, sp := range specs {
-			if sp.Entry == *only {
-				filtered = append(filtered, sp)
-			}
-		}
-		if len(filtered) == 0 {
-			fmt.Fprintf(os.Stderr, "no proof for entry %q; run --list to see what is covered\n", *only)
+	// Repeatable, and it matters more than it looks. Proving two entries by
+	// invoking this twice skips the quiesce between them, because the quiesce
+	// lives between specs inside one run. That happened: the second proof was
+	// refused by its own preflight, correctly, because the entry it was about
+	// to test was still breaching from the first proof's reset. One invocation
+	// with two --entry flags is the fix, and it is why this is a list.
+	if len(only) > 0 {
+		var missing []string
+		specs, missing = selectSpecs(specs, only)
+		if len(missing) > 0 {
+			fmt.Fprintf(os.Stderr, "no proof for %s; run --list to see what is covered\n", strings.Join(missing, ", "))
 			os.Exit(1)
 		}
-		specs = filtered
 	}
 
 	logger := log.New(os.Stderr, "prove: ", log.LstdFlags)
@@ -656,4 +658,48 @@ func summarize(results []proof.Result, entries, proofs int) int {
 		return 1
 	}
 	return 0
+}
+
+// multiFlag collects a repeatable string flag. It satisfies flag.Value, which
+// is an interface of exactly two methods and no declaration that this type
+// implements it: in Go, having the methods is what satisfies the contract.
+//
+// The receiver is a pointer because Set has to grow the slice it is called on;
+// a value receiver would append to a copy and lose it. String is safe on the
+// zero value because the flag package builds one by reflection to decide
+// whether to print a default, and strings.Join of a nil slice is the empty
+// string.
+type multiFlag []string
+
+func (m *multiFlag) String() string { return strings.Join(*m, ",") }
+
+func (m *multiFlag) Set(v string) error {
+	*m = append(*m, v)
+	return nil
+}
+
+// selectSpecs narrows a spec list to the requested entry ids, and reports
+// every id that matched nothing.
+//
+// Reporting all of them matters: a typo in one of five entries would
+// otherwise read as a run of four, and a proof suite that quietly ran less
+// than it was asked to is the failure this whole harness exists to avoid.
+// Order follows the spec list rather than the request, so a run is
+// reproducible from the directory regardless of how the flags were typed.
+func selectSpecs(specs []proof.Spec, want []string) (selected []proof.Spec, missing []string) {
+	wanted := make(map[string]bool, len(want))
+	for _, e := range want {
+		wanted[e] = true
+	}
+	for _, sp := range specs {
+		if wanted[sp.Entry] {
+			selected = append(selected, sp)
+			delete(wanted, sp.Entry)
+		}
+	}
+	for e := range wanted {
+		missing = append(missing, e)
+	}
+	sort.Strings(missing)
+	return selected, missing
 }

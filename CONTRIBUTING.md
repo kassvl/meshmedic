@@ -91,7 +91,12 @@ separate binary and a separate download for that reason, it prints every
 command before running any of them, and it refuses to start without the
 acknowledgement flag. Point it at a testbed.
 
-For a whole suite, two flags matter. `--wait-observer` makes the runner wait
+`--entry` is repeatable, and using it once per run rather than running the
+command twice is what keeps the quiesce between proofs: a fault takes time to
+decay out of a two-minute rate window, and the next proof measuring that tail
+is how a good entry gets blamed for the previous one.
+
+For a whole suite, two more flags matter. `--wait-observer` makes the runner wait
 for Prometheus to come back before each proof rather than injecting into a
 cluster nobody is watching; a long run outlives the forward that was up when it
 started. `--retry-blind` re-runs a proof that went blind, and only one that went
