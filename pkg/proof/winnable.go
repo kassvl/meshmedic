@@ -98,3 +98,26 @@ func CheckWinnable(scenarios []catalog.Scenario, specs []Spec) []Winnability {
 	})
 	return out
 }
+
+// CheckEntriesExist reports proof specs naming an entry the catalog does not
+// have.
+//
+// A proof for an entry that is not in the catalog proves nothing, and a typo
+// in an id silently skips the entry it meant to test, which is the quiet
+// version of the failure this whole harness exists to prevent. It lives here
+// rather than inline in the command so a mutation suite can rename an entry
+// and confirm the check notices.
+func CheckEntriesExist(scenarios []catalog.Scenario, specs []Spec) []string {
+	known := make(map[string]bool, len(scenarios))
+	for _, s := range scenarios {
+		known[s.ID] = true
+	}
+	var missing []string
+	for _, sp := range specs {
+		if !known[sp.Entry] {
+			missing = append(missing, sp.Entry)
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
