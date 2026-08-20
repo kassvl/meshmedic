@@ -105,6 +105,23 @@ finding, and a harness that retries findings until they disappear is a machine
 for producing green. `--results out.json` writes the run in a form something
 other than a person can read.
 
+**6. Prove it stays quiet too.**
+
+```console
+$ meshmedic-prove silence --for 20m --kube-context <ctx>
+```
+
+Every spec you write asserts that an entry fires when its fault is there. None
+of them assert that it stays quiet when it is not, and an entry that fires on
+everything passes every proof in the directory. `silence` injects nothing and
+watches a healthy cluster with the real detector.
+
+Read the margin column rather than the verdict. An entry can sit just under its
+threshold all day, never fire, and be one busy afternoon from a false positive;
+the margin between the longest healthy breach and the hold duration is what
+says so, and a threshold comparison does not. Under 2x is worth a second look
+even though it does not fail the run.
+
 A forward that stays up for the length of a suite is its own small problem;
 [`hack/port-forward.sh`](hack/port-forward.sh) is the recipe, including the
 part that is easy to get wrong.

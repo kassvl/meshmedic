@@ -40,6 +40,7 @@ import (
 	"time"
 
 	"github.com/kassvl/meshmedic/pkg/catalog"
+	"github.com/kassvl/meshmedic/pkg/detect"
 	"github.com/kassvl/meshmedic/pkg/kube"
 	"github.com/kassvl/meshmedic/pkg/prom"
 	"github.com/kassvl/meshmedic/pkg/proof"
@@ -51,14 +52,20 @@ func main() {
 	// form v1.0.0 shipped with, so a documented command line does not stop
 	// working. Anything starting with a dash is the legacy form.
 	args := os.Args[1:]
-	doctorMode := len(args) > 0 && args[0] == "doctor"
-	if doctorMode {
-		args = args[1:]
+	sub := ""
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		sub, args = args[0], args[1:]
+	}
+	doctorMode := sub == "doctor"
+	silenceMode := sub == "silence"
+	if sub != "" && !doctorMode && !silenceMode {
+		fmt.Fprintf(os.Stderr, "unknown command %q; the commands are doctor and silence, or pass flags for a proof run\n", sub)
+		os.Exit(2)
 	}
 
 	name := "meshmedic-prove"
-	if doctorMode {
-		name = "meshmedic-prove doctor"
+	if sub != "" {
+		name = "meshmedic-prove " + sub
 	}
 	fs := flag.NewFlagSet(name, flag.ExitOnError)
 	catalogDir := fs.String("catalog", "catalog", "catalog directory")
@@ -80,6 +87,8 @@ func main() {
 	// harness launders a bug into a pass.
 	retries := fs.Int("retry-blind", 1, "re-run a proof this many times when the harness went blind; failures are never retried")
 	resultsPath := fs.String("results", "", "write the run's results as JSON to this path")
+	silenceFor := fs.Duration("for", 20*time.Minute, "silence only: how long to watch a healthy cluster")
+	silenceWarmup := fs.Duration("warmup", 5*time.Minute, "silence only: learn the baseline for this long first, so relative thresholds are measured as production uses them")
 	fs.Parse(args)
 
 	scenarios, err := catalog.LoadDir(*catalogDir)
@@ -158,11 +167,10 @@ func main() {
 	}
 
 	// Print exactly what is about to be done to the cluster, then require an
-	// acknowledgement. A tool that mutates a mesh should never do it because
-	// someone pasted a command without reading it, and the list below is the
-	// difference between an informed act and an accident.
-	if !confirmed(specs, *yes) {
-		os.Exit(2)
+	// acknowledgement. A silence run injects nothing, so it has nothing to
+	// acknowledge and skips this.
+	if !silenceMode {
+		requireAcknowledgement(specs, *yes)
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -185,6 +193,27 @@ func main() {
 	}
 	observer := prom.NewClient(*promURL)
 	runner := proof.NewRunner(scenarios, observer, reader)
+
+	// A silence run is the other half of the suite: it injects nothing and
+	// asks whether the catalog would have paged anyone on a cluster where
+	// nothing is wrong. Every proof spec asserts that an entry fires when its
+	// fault is present; none of them assert that it stays quiet when it is
+	// not, and a detector that fires on everything passes all of them.
+	if silenceMode {
+		runner.Log = func(format string, args ...any) { logger.Printf("  "+format, args...) }
+		targets := targetsFromSpecs(specs)
+		logger.Printf("watching %d entries across %d target(s) for %s after %s of warm-up, injecting nothing",
+			len(scenarios), len(targets), *silenceFor, *silenceWarmup)
+		reports, err := runner.Silence(ctx, targets, *silenceFor, *silenceWarmup)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "silence run void:", err)
+			os.Exit(1)
+		}
+		if *resultsPath != "" {
+			writeSilence(*resultsPath, reports, logger)
+		}
+		os.Exit(summarizeSilence(reports, *silenceFor))
+	}
 
 	results := make([]proof.Result, 0, len(specs))
 	for i, sp := range specs {
@@ -702,4 +731,135 @@ func selectSpecs(specs []proof.Spec, want []string) (selected []proof.Spec, miss
 	}
 	sort.Strings(missing)
 	return selected, missing
+}
+
+// requireAcknowledgement prints exactly what is about to be done to the
+// cluster and refuses to continue without a yes. A tool that mutates a mesh
+// should never do it because someone pasted a command without reading it, and
+// the printed list is the difference between an informed act and an accident.
+func requireAcknowledgement(specs []proof.Spec, yes bool) {
+	if !confirmed(specs, yes) {
+		os.Exit(2)
+	}
+}
+
+// targetsFromSpecs collects the distinct targets the proof specs watch, so a
+// silence run covers exactly the ground the fault runs cover. Deduplicated
+// because several entries share one target and watching it twice would double
+// every count without adding a reading.
+func targetsFromSpecs(specs []proof.Spec) []detect.Target {
+	seen := map[string]bool{}
+	var out []detect.Target
+	for _, sp := range specs {
+		key := fmt.Sprint(sp.Target)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, detect.Target{Params: sp.Target})
+	}
+	return out
+}
+
+// summarizeSilence prints the window's findings worst first and returns the
+// exit code. A reported incident fails the run; a brush with a thin margin
+// does not, because it is a warning about the future rather than a fault now,
+// and turning every thin margin into a failure would teach people to stop
+// running this.
+func summarizeSilence(reports []proof.SilenceReport, window time.Duration) int {
+	fmt.Println()
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	keys := proof.DistinguishingParams(reports)
+	header := "ENTRY\tVERDICT\tPEAK\tTHRESHOLD\tLONGEST BREACH\tHOLD\tNOTE"
+	if len(keys) > 0 {
+		header = "ENTRY\tTARGET\tVERDICT\tPEAK\tTHRESHOLD\tLONGEST BREACH\tHOLD\tNOTE"
+	}
+	fmt.Fprintln(w, header)
+	var fired, brushed, thin, unwatched, na int
+	for _, r := range reports {
+		switch r.Verdict() {
+		case proof.Fired:
+			fired++
+		case proof.Brushed:
+			brushed++
+			if r.Margin() < 2 {
+				thin++
+			}
+		case proof.Unwatched:
+			unwatched++
+		case proof.NotApplicable:
+			na++
+		}
+		peak, breach := "-", "-"
+		if r.HasPeak {
+			peak = fmt.Sprintf("%.4g", r.Peak)
+		}
+		if r.LongestBreach > 0 {
+			breach = r.LongestBreach.Round(time.Second).String()
+		}
+		threshold := fmt.Sprintf("> %.4g", r.Threshold)
+		if r.Relative {
+			threshold += " (learned)"
+		}
+		note := r.Note()
+		if note == "" {
+			note = "-"
+		}
+		if len(keys) > 0 {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				r.Entry, r.Label(keys), r.Verdict(), peak, threshold, breach, r.Hold.Round(time.Second), note)
+		} else {
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+				r.Entry, r.Verdict(), peak, threshold, breach, r.Hold.Round(time.Second), note)
+		}
+	}
+	w.Flush()
+
+	// Count entries and targets, not the product of the two. "36 entries
+	// watched" when the catalog has eighteen reads as a bug in the tool.
+	entries, targets := map[string]bool{}, map[string]bool{}
+	for _, r := range reports {
+		entries[r.Entry] = true
+		targets[fmt.Sprint(r.Target)] = true
+	}
+	fmt.Printf("\n%d entries across %d target(s) watched for %s with nothing injected: %d fired, %d brushed, %d unwatched\n",
+		len(entries), len(targets), window, fired, brushed, unwatched)
+	if na > 0 {
+		// Said, not warned about. A pair that was never a question is not a
+		// gap in coverage, and printing it as one trains people to ignore the
+		// line that also carries the real warnings.
+		fmt.Printf("%d entry/target pairs did not apply and were not evaluated.\n", na)
+	}
+	if fired > 0 {
+		fmt.Printf("%d entries reported an incident on a healthy cluster. Every one is a false positive\n"+
+			"  a real operator would have been paged for, and no fault-injection proof can find it.\n", fired)
+	}
+	if thin > 0 {
+		fmt.Printf("%d entries stayed quiet on a margin under 2x. They did not fire today; the number\n"+
+			"  says how much ordinary load is between them and firing tomorrow.\n", thin)
+	}
+	if unwatched > 0 {
+		fmt.Printf("%d entries produced no readings, so this window says nothing about them.\n", unwatched)
+	}
+	if fired > 0 {
+		return 1
+	}
+	return 0
+}
+
+// writeSilence records the window in a form something other than a person can
+// read, for the same reason the fault half does.
+func writeSilence(path string, reports []proof.SilenceReport, logger *log.Logger) {
+	body, err := json.MarshalIndent(struct {
+		Silence []proof.SilenceReport `json:"silence"`
+	}{reports}, "", "  ")
+	if err != nil {
+		logger.Printf("cannot encode silence reports: %v", err)
+		return
+	}
+	if err := os.WriteFile(path, append(body, '\n'), 0o644); err != nil {
+		logger.Printf("cannot write %s: %v", path, err)
+		return
+	}
+	logger.Printf("silence reports written to %s", path)
 }

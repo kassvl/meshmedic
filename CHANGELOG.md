@@ -36,6 +36,31 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`meshmedic-prove silence`**, the axis the proof suite could not reach.
+  Every spec in `proof/` asserts that an entry fires when its fault is present.
+  None of them assert that it stays quiet when it is not, and a detector that
+  fires on everything passes all of them. This injects nothing and watches a
+  healthy cluster with the real detector, so hold durations, suppression, the
+  coverage probe and the guardrails are all in force.
+
+  It is a different question from `meshmedic calibrate`, which samples the
+  signal and reports how far the healthy extreme sits from the threshold.
+  Calibrate asks how close the number is; this asks whether anyone would have
+  been paged. The gap between those was measured on 2026-08-19: an entry
+  entered breach on a cluster with nothing injected into its path and stayed
+  there for 180 unbroken seconds, twice its hold duration, and the only reason
+  it published nothing is that the observation window closed 25 seconds in.
+  Nothing in the suite was looking for it.
+
+  Five verdicts, and the distinctions are the point. `silent` never crossed;
+  `brushed` crossed but not for long enough, and reports the margin between the
+  longest healthy breach and the hold duration, which is what an ordinary busy
+  hour eats into; `FIRED` is a false positive, measured; `unwatched` produced
+  no readings, so its silence proves nothing; `n/a` was never a question for
+  that target. A thin margin warns without failing the run, because it is a
+  warning about tomorrow rather than a fault today. `--warmup` learns the
+  baseline first, so relative thresholds are measured as production uses them
+  rather than against a static fallback production never sees.
 - **`--entry` is repeatable.** Proving two entries used to mean invoking the
   command twice, which skips the quiesce between them, because the quiesce
   lives between specs inside one run. That is not hypothetical: the second of
