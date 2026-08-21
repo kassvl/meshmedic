@@ -20,6 +20,16 @@ reset:
 settle: 90s
 firesWithin: 5m
 resolvesWithin: 5m
+# The fix is proven with the fault untouched. ERROR_RATE stays at 0.9 on the
+# canary; the patch turns on outlier detection, and the claim is that ejecting
+# the failing endpoints drops the service's 5xx ratio even though the endpoints
+# are still broken. Removing the fault first would prove only that the fault
+# caused it, which the resolution half above already shows.
+remediation:
+  clearsWithin: 4m
+  revert:
+    - desc: remove the outlier detection the patch added
+      run: [kubectl, --context=kind-meshmedic-demo, -n, demo, delete, destinationrule, payments-outlier, --ignore-not-found]
 expect:
   # The entry must name the failing subset, not just report a ratio. A 5xx
   # surge that does not say which workload is emitting them tells an operator

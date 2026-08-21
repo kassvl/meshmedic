@@ -58,8 +58,9 @@ func main() {
 	}
 	doctorMode := sub == "doctor"
 	silenceMode := sub == "silence"
-	if sub != "" && !doctorMode && !silenceMode {
-		fmt.Fprintf(os.Stderr, "unknown command %q; the commands are doctor and silence, or pass flags for a proof run\n", sub)
+	remediateMode := sub == "remediate"
+	if sub != "" && !doctorMode && !silenceMode && !remediateMode {
+		fmt.Fprintf(os.Stderr, "unknown command %q; the commands are doctor, silence and remediate, or pass flags for a proof run\n", sub)
 		os.Exit(2)
 	}
 
@@ -228,6 +229,39 @@ func main() {
 			writeSilence(*resultsPath, reports, logger)
 		}
 		os.Exit(summarizeSilence(reports, *silenceFor))
+	}
+
+	// Proving the remedy is a separate run from proving the detection, because
+	// a working patch clears the signal and the ordinary proof would time that
+	// clearing and call it the reset.
+	if remediateMode {
+		results := make([]proof.RemediationResult, 0, len(specs))
+		for i, sp := range specs {
+			if i > 0 && *quiesce > 0 {
+				logger.Printf("quiescing %s so the previous fault decays out of the rate windows", *quiesce)
+				select {
+				case <-ctx.Done():
+				case <-time.After(*quiesce):
+				}
+			}
+			logger.Printf("[%d/%d] %s", i+1, len(specs), sp.Entry)
+			runner.Log = func(format string, args ...any) {
+				logger.Printf("  "+sp.Entry+": "+format, args...)
+			}
+			res := runner.Remediate(ctx, sp)
+			results = append(results, res)
+			logger.Printf("[%d/%d] %s: %s (%s)", i+1, len(specs), sp.Entry, res.Verdict(), res.Duration.Round(time.Second))
+			for _, f := range res.Failures {
+				logger.Printf("    %s", f)
+			}
+			if ctx.Err() != nil {
+				break
+			}
+		}
+		if *resultsPath != "" {
+			writeRemediation(*resultsPath, results, logger)
+		}
+		os.Exit(summarizeRemediation(results))
 	}
 
 	results := make([]proof.Result, 0, len(specs))
@@ -877,4 +911,75 @@ func writeSilence(path string, reports []proof.SilenceReport, logger *log.Logger
 		return
 	}
 	logger.Printf("silence reports written to %s", path)
+}
+
+// summarizeRemediation prints what applying each entry's own patch proved.
+func summarizeRemediation(results []proof.RemediationResult) int {
+	fmt.Println()
+	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
+	fmt.Fprintln(w, "ENTRY\tRESULT\tAT FIRE\tAFTER FIX\tTHRESHOLD\tCLEARED IN\tDETAIL")
+	var passed, failed, blind, skipped int
+	for _, r := range results {
+		switch r.Verdict() {
+		case "pass":
+			passed++
+		case "BLIND":
+			blind++
+		case "skipped":
+			skipped++
+		default:
+			failed++
+		}
+		atFire, after, in := "-", "-", "-"
+		if r.Fired {
+			atFire = fmt.Sprintf("%.4g", r.AtFire)
+		}
+		if r.Applied {
+			after = fmt.Sprintf("%.4g", r.AtEnd)
+		}
+		if r.Cleared {
+			in = r.ClearedAfter.Round(time.Second).String()
+		}
+		detail := r.Skipped
+		if detail == "" {
+			detail = strings.Join(r.Failures, "; ")
+		}
+		if detail == "" {
+			detail = "-"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%.4g\t%s\t%s\n",
+			r.Entry, r.Verdict(), atFire, after, r.Threshold, in, detail)
+	}
+	w.Flush()
+
+	fmt.Printf("\n%d remedies attempted: %d proved, %d failed, %d blind, %d skipped\n",
+		len(results), passed, failed, blind, skipped)
+	if skipped > 0 {
+		// Said, not warned about. Most of this catalog proposes a dossier
+		// rather than a patch, and that is a design choice rather than a gap.
+		fmt.Printf("%d entries propose no patch, so there was no fix to prove.\n", skipped)
+	}
+	if failed > 0 {
+		fmt.Printf("%d entries reported an incident and proposed a change that did not stop it.\n", failed)
+		return 1
+	}
+	if blind > 0 {
+		return 1
+	}
+	return 0
+}
+
+func writeRemediation(path string, results []proof.RemediationResult, logger *log.Logger) {
+	body, err := json.MarshalIndent(struct {
+		Remediation []proof.RemediationResult `json:"remediation"`
+	}{results}, "", "  ")
+	if err != nil {
+		logger.Printf("cannot encode remediation results: %v", err)
+		return
+	}
+	if err := os.WriteFile(path, append(body, '\n'), 0o644); err != nil {
+		logger.Printf("cannot write %s: %v", path, err)
+		return
+	}
+	logger.Printf("remediation results written to %s", path)
 }

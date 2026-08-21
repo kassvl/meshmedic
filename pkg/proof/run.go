@@ -56,6 +56,11 @@ type Runner struct {
 	// prom is the querier; exported through the constructor and overridable in
 	// tests that need to change the cluster mid-proof.
 	prom detect.Querier
+	// ExecInput runs a command with something on stdin, for applying a
+	// rendered patch. Injected alongside Exec so a remediation proof can be
+	// exercised without a cluster, and so a test can see the exact bytes that
+	// would have been applied.
+	ExecInput func(ctx context.Context, argv []string, stdin string) error
 	// Exec runs an injection or reset command. Injected so tests can prove
 	// the runner's logic without touching a cluster.
 	Exec func(ctx context.Context, argv []string) error
@@ -128,6 +133,7 @@ func NewRunner(scenarios []catalog.Scenario, q detect.Querier, reader *kube.Read
 		scenarios: scenarios,
 		prom:      q,
 		Exec:      execCommand,
+		ExecInput: execCommandInput,
 		Now:       time.Now,
 		Log:       func(string, ...any) {},
 		Poll:      10 * time.Second,
@@ -142,7 +148,18 @@ func NewRunner(scenarios []catalog.Scenario, q detect.Querier, reader *kube.Read
 }
 
 func execCommand(ctx context.Context, argv []string) error {
+	return execCommandInput(ctx, argv, "")
+}
+
+// execCommandInput is execCommand with something on stdin, which is what
+// applying a rendered patch needs: `kubectl apply -f -` reads the YAML the
+// entry proposed rather than a path, so the bytes the proof applies are the
+// bytes the report showed and there is no temp file in between to drift.
+func execCommandInput(ctx context.Context, argv []string, stdin string) error {
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s: %w: %s", strings.Join(argv, " "), err, strings.TrimSpace(string(out)))
