@@ -36,6 +36,39 @@ versions follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`meshmedic-prove remediate`**, which asks the question the rest of the
+  suite cannot: if I merge what this entry proposed, does the incident stop?
+
+  Every spec in `proof/` shows the right entry fired and named the culprit.
+  None show that the patch would have helped, and "opens the fix as a pull
+  request" is the sentence this project leads with. It is the largest
+  unverified claim in the product.
+
+  The patch is applied with the fault still in place, which is what makes it a
+  test. Removing the fault and watching the signal fall proves the fault caused
+  it, which the resolution half of the ordinary proof already covers. Leaving
+  the fault and applying the fix asks an operator's actual question. It is a
+  separate command because the two would collide: a working patch clears the
+  signal, so the ordinary proof would time the remediation and call it the
+  reset.
+
+  Thirteen of eighteen entries are report-only and are skipped with a reason,
+  which is a design choice rather than a coverage gap and is reported as one.
+  The revert is declared rather than derived, because a patch that creates an
+  object and one that edits it are undone differently, and guessing from the
+  rendered YAML is how a harness deletes something it did not create. It runs
+  on success, on failure and on interrupt: a leftover fault is loud, and a
+  leftover fix is silent.
+
+  The unit tests found a Go defect while being written. The deferred cleanup
+  wrote its results into a variable nobody read, because `return res` with an
+  unnamed return copies the struct before any defer runs, so whether the revert
+  succeeded, how long the run took, and any failure during cleanup were all
+  discarded. Three losses, no compiler complaint. Fixed with a named return.
+
+  Known rough edge, not yet fixed: when a run fails because the entry never
+  fired, the summary still prints "reported an incident and proposed a change
+  that did not stop it", which describes a different failure.
 - **A mutation suite over the guards themselves.** Every guard here claims to
   catch something and nothing checked the claim, which stopped being an
   abstract worry on 2026-08-20: four separate checks turned out to be checking

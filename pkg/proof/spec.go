@@ -81,6 +81,43 @@ type Spec struct {
 	ResolvesWithin Duration `yaml:"resolvesWithin"`
 
 	Expect Expect `yaml:"expect"`
+
+	// Remediation, when set, enables the second claim this project makes and
+	// nothing has been checking: that the patch the entry proposes actually
+	// works. Absent means the entry proposes no patch, or nobody has written
+	// the undo yet, and the inventory says which.
+	Remediation *RemediationCheck `yaml:"remediation"`
+}
+
+// RemediationCheck is how a proof asserts that the fix fixes it.
+//
+// The catalog's headline is that MeshMedic opens the remediation as a pull
+// request. Every proof in this directory checks that the right entry fired and
+// named the culprit; none check that merging the thing it proposed would have
+// helped. That is the largest unverified claim in the product, and it is
+// verifiable: apply the patch with the fault still in place and watch whether
+// the signal recovers.
+//
+// With the fault still in place is the whole point. Removing the fault and
+// watching the signal drop proves only that the fault caused it, which the
+// resolution half of the ordinary proof already shows. Leaving the fault and
+// applying the fix asks the question an operator actually has: if I merge
+// this, does the incident stop?
+type RemediationCheck struct {
+	// ClearsWithin bounds how long the signal may take to fall back under its
+	// threshold once the patch is applied. Rate windows are wide, so this is
+	// measured in minutes rather than seconds.
+	ClearsWithin Duration `yaml:"clearsWithin"`
+	// Revert undoes the patch. Required, and idempotent for the same reason
+	// Reset is: it runs on success, on failure and on interrupt, because a
+	// proof that leaves its own remediation on the testbed has changed the
+	// cluster every run after it measures.
+	//
+	// It is declared rather than derived because a patch that creates an
+	// object and a patch that edits one are undone differently, and guessing
+	// which from the rendered YAML is how a harness deletes something it did
+	// not create.
+	Revert []Command `yaml:"revert"`
 }
 
 // Expect is what the proof asserts.
@@ -194,6 +231,19 @@ func (s Spec) Validate() error {
 	}
 	if len(s.Reset) == 0 {
 		return fmt.Errorf("%s: at least one reset command is required: a proof that leaves the fault behind poisons every run after it", s.Entry)
+	}
+	if s.Remediation != nil {
+		if s.Remediation.ClearsWithin.D() <= 0 {
+			return fmt.Errorf("%s: remediation.clearsWithin is required and must be positive", s.Entry)
+		}
+		if len(s.Remediation.Revert) == 0 {
+			return fmt.Errorf("%s: remediation.revert is required: a proof that leaves its own patch on the testbed changes every run after it", s.Entry)
+		}
+		for i, c := range s.Remediation.Revert {
+			if len(c.Run) == 0 {
+				return fmt.Errorf("%s: remediation.revert[%d] has no argv", s.Entry, i)
+			}
+		}
 	}
 	if s.FiresWithin.D() <= 0 {
 		return fmt.Errorf("%s: firesWithin is required and must be positive", s.Entry)
